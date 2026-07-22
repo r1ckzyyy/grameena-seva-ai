@@ -148,7 +148,11 @@ st.markdown(
         background: #1B5E20 !important;
     }
     div[data-testid="stAudioInput"] button:not(:first-of-type) {
-        display: none !important;
+        display: inline-flex !important;
+        width: 3rem !important;
+        min-height: 2.5rem !important;
+        margin: 0.5rem 0.25rem 0;
+        padding: 0.4rem !important;
     }
     div[data-testid="stAudioInput"] label {
         display: block !important;
@@ -593,6 +597,7 @@ def process_recording(audio_bytes: bytes) -> None:
 
     if not transcript:
         st.session_state.card_status = "error"
+        st.error("I could not hear the recording. Please speak closer to the microphone and try again.")
         return
 
     conversation.transcript = transcript
@@ -718,13 +723,13 @@ st.markdown('<div class="mic-help">I will detect your language and ask one quest
 mic_col_left, mic_col_center, mic_col_right = st.columns([1, 2, 1])
 with mic_col_center:
     # Streamlit 1.45+ defaults this widget to 16 kHz.
-    audio = st.audio_input("🎙️ Tap once to speak • tap again when finished", key="kiosk_mic")
+    audio = st.audio_input("🎙️ Tap microphone to start • use stop when finished", key="kiosk_mic")
 
 conversation: ConversationState = st.session_state.conversation
 if not conversation.turns:
     st.markdown(
-        '<div class="status-message">🎙️ Start by tapping the green button, speak in your language, '
-        'then tap it again when you finish.</div>',
+        '<div class="status-message">🎙️ Tap the microphone, speak in your language, '
+        'then press the stop button. Your question will appear below.</div>',
         unsafe_allow_html=True,
     )
 if conversation.turns:
