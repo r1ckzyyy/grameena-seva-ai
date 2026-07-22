@@ -154,6 +154,14 @@ st.markdown(
         margin: 0.5rem 0.25rem 0;
         padding: 0.4rem !important;
     }
+    /* Keep Streamlit's recorder lifecycle intact; only make the primary control compact. */
+    div[data-testid="stAudioInput"] button:first-of-type {
+        width: auto !important;
+        min-height: 2.75rem !important;
+        border-radius: 0.75rem !important;
+        box-shadow: none !important;
+        font-size: 1rem !important;
+    }
     div[data-testid="stAudioInput"] label {
         display: block !important;
         text-align: center;
@@ -586,17 +594,22 @@ def format_inr(amount: int | float) -> str:
 
 def process_recording(audio_bytes: bytes) -> None:
     conversation: ConversationState = st.session_state.conversation
+    work = st.status("Working on your request…", expanded=True)
+    work.write("✅ Recording received")
+    work.write("🎧 Converting your voice into text…")
     with st.spinner("Listening…"):
         try:
             transcript, detected_language = transcribe(audio_bytes, get_secret("SARVAM_API_KEY"))
         except Exception as exc:
             st.session_state.card_status = "error"
+            work.update(label="Speech recognition failed", state="error", expanded=True)
             st.error(f"Speech recognition failed: {exc}")
             return
         st.session_state.transcript = transcript
 
     if not transcript:
         st.session_state.card_status = "error"
+        work.update(label="I could not hear the recording", state="error", expanded=True)
         st.error("I could not hear the recording. Please speak closer to the microphone and try again.")
         return
 
@@ -605,6 +618,7 @@ def process_recording(audio_bytes: bytes) -> None:
         conversation.language_code = detected_language
     conversation.add_turn("farmer", transcript)
 
+    work.write("🧠 Understanding what you need and checking which detail is missing…")
     with st.spinner("Understanding your request…"):
         try:
             result = run_conversation(
@@ -615,6 +629,7 @@ def process_recording(audio_bytes: bytes) -> None:
             )
         except Exception as exc:
             st.session_state.card_status = "error"
+            work.update(label="The assistant could not process the request", state="error", expanded=True)
             st.error(f"Assistant request failed: {exc}")
             return
     conversation.result = result
@@ -631,6 +646,13 @@ def process_recording(audio_bytes: bytes) -> None:
     st.session_state.voice_response = result.voice_response or result.next_question
     st.session_state.card_status = "success" if result.conversation_complete else "warning"
 
+    if result.conversation_complete:
+        work.write("🔎 Enough information collected. Searching official government sources…")
+        work.write("📄 Reading official scheme details and preparing the answer…")
+    else:
+        work.write("❓ I need one more important detail before searching government schemes…")
+    work.write("🔊 Preparing the spoken reply in your language…")
+
     with st.spinner("Generating voice response…"):
         try:
             st.session_state.tts_audio_bytes = text_to_speech(
@@ -640,7 +662,11 @@ def process_recording(audio_bytes: bytes) -> None:
             )
         except Exception as exc:
             st.session_state.tts_audio_bytes = None
+            work.update(label="Reply text is ready, but voice playback failed", state="error", expanded=True)
             st.error(f"TTS failed: {exc}")
+            return
+
+    work.update(label="Reply ready — see the conversation below", state="complete", expanded=False)
 
 
 def render_metrics() -> None:
@@ -764,6 +790,7 @@ if audio is not None:
     audio_hash = hash(audio_bytes)
     if audio_hash != st.session_state.last_audio_hash:
         st.session_state.last_audio_hash = audio_hash
+        st.info("✅ Recording received. I’m listening and preparing your reply…")
         process_recording(audio_bytes)
         st.rerun()
 
