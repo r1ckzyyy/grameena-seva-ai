@@ -16,7 +16,7 @@ from typing import Any
 import qrcode
 import streamlit as st
 from google.genai import types
-from agents.conversation import GEMINI_MODEL, run_conversation
+from agents.conversation import GEMINI_MODEL, _localized_fallback, run_conversation
 from models.conversation import ConversationState
 from services.recorder import autonomous_recorder
 from services.sarvam import text_to_speech, transcribe
@@ -63,12 +63,24 @@ st.markdown(
     }
     .main-header {
         text-align: center;
-        color: #1B5E20;
-        font-size: 3rem;
+        color: #0D631B;
+        font-size: 2.6rem;
         font-weight: 900;
         letter-spacing: 0.5px;
-        margin: 0.5rem 0 0.25rem 0;
+        margin: 1rem 0 0.25rem 0;
         line-height: 1.15;
+    }
+    .brand-mark {
+        width: 58px;
+        height: 58px;
+        display: grid;
+        place-items: center;
+        margin: 0.8rem auto 0;
+        border-radius: 50%;
+        background: #E8F5E9;
+        border: 2px solid #A5D6A7;
+        box-shadow: 0 8px 20px rgba(46, 125, 50, 0.12);
+        font-size: 2rem;
     }
     .main-subtitle {
         text-align: center;
@@ -76,6 +88,17 @@ st.markdown(
         font-size: 1.35rem;
         font-weight: 600;
         margin-bottom: 1.5rem;
+    }
+    .language-badge {
+        width: fit-content;
+        margin: 0 auto 0.8rem;
+        padding: 0.35rem 0.8rem;
+        border-radius: 999px;
+        background: #E8F5E9;
+        border: 1px solid #A5D6A7;
+        color: #1B5E20;
+        font-size: 0.9rem;
+        font-weight: 800;
     }
     .panel-title {
         color: #2E7D32;
@@ -228,7 +251,14 @@ st.markdown(
     }
     .chat-shell {
         max-width: 900px;
+        max-height: 42vh;
+        overflow-y: auto;
+        display: flex;
+        flex-direction: column-reverse;
+        gap: 0.2rem;
         margin: 1.5rem auto 0;
+        padding: 0.25rem 0.5rem;
+        scroll-behavior: smooth;
     }
     .chat-bubble {
         padding: 1rem 1.25rem;
@@ -237,7 +267,10 @@ st.markdown(
         font-size: 1.3rem;
         line-height: 1.5;
         white-space: pre-wrap;
+        box-shadow: 0 8px 22px rgba(46, 125, 50, 0.08);
+        animation: chat-in 0.35s ease-out both;
     }
+    @keyframes chat-in { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: translateY(0); } }
     .chat-bubble.farmer {
         margin-left: 12%;
         background: #E3F2FD;
@@ -289,7 +322,8 @@ st.markdown(
         padding: 1.5rem;
         text-align: center;
         box-shadow: 0 8px 24px rgba(0, 0, 0, 0.08);
-        border-top: 6px solid #2E7D32;
+        border: 1px solid #D6E6D3;
+        border-top: 5px solid #2E7D32;
     }
     .metric-card.warning {
         border-top-color: #F9A825;
@@ -708,12 +742,20 @@ def process_recording(audio_bytes: bytes) -> bool:
     conversation.result = result
     if result.goodbye_detected:
         result.conversation_complete = True
+    if result.conversation_complete and not conversation.eligibility_status:
+        conversation.eligibility_status = "complete"
     # The text shown and the text spoken must always be identical.
-    spoken_response = result.voice_response or result.next_question
-    if result.next_question and result.next_question not in spoken_response:
-        spoken_response = f"{spoken_response}\n{result.next_question}".strip()
-    if spoken_response:
-        conversation.add_turn("assistant", spoken_response)
+    spoken_response = (result.voice_response or "").strip()
+    if not spoken_response:
+        spoken_response = _localized_fallback(conversation.language_code, "prompt")
+    previous_assistant_messages = {
+        turn["text"] for turn in conversation.turns if turn["role"] == "assistant"
+    }
+    if spoken_response in previous_assistant_messages:
+        spoken_response = _localized_fallback(conversation.language_code, "repeat")
+    result.voice_response = spoken_response
+    result.next_question = ""
+    conversation.add_turn("assistant", spoken_response)
 
     st.session_state.equipment = result.equipment_or_input
     st.session_state.scheme_name = result.scheme_name or ""
@@ -768,11 +810,18 @@ def render_metrics() -> None:
     if result.subsidy_percent > 0:
         cards.append(f'<div class="{card_class}"><div class="metric-label">Subsidy Percentage</div><div class="metric-value">{result.subsidy_percent}%</div></div>')
     if result.max_claim_inr > 0:
-        cards.append(f'<div class="{card_class}"><div class="metric-label">Maximum Claimable Amount</div><div class="metric-value highlight">{format_inr(result.max_claim_inr)}</div></div>')
+        cards.append(f'<div class="{card_class}"><div class="metric-label">Maximum Subsidy</div><div class="metric-value highlight">{format_inr(result.max_claim_inr)}</div></div>')
     if st.session_state.equipment:
         cards.append(f'<div class="metric-card"><div class="metric-label">Equipment / Input</div><div class="metric-value" style="font-size:1.6rem;">{html.escape(st.session_state.equipment)}</div></div>')
     if st.session_state.scheme_name:
         cards.append(f'<div class="metric-card"><div class="metric-label">Eligible Scheme</div><div class="metric-value" style="font-size:1.5rem;">{html.escape(st.session_state.scheme_name)}</div></div>')
+    eligibility = st.session_state.conversation.eligibility_status
+    if eligibility:
+        cards.append(f'<div class="metric-card"><div class="metric-label">Eligibility</div><div class="metric-value" style="font-size:1.5rem;">{html.escape(eligibility.title())}</div></div>')
+    source_url = result.source_url or st.session_state.conversation.researched_url
+    if source_url:
+        safe_url = html.escape(source_url, quote=True)
+        cards.append(f'<div class="metric-card"><div class="metric-label">Official Government Source</div><div class="metric-value" style="font-size:1rem;"><a href="{safe_url}" target="_blank" rel="noopener">Open official source</a></div></div>')
     if cards:
         st.markdown(f'<div class="metric-grid">{"".join(cards)}</div>', unsafe_allow_html=True)
     documents = result.required_documents
@@ -836,11 +885,30 @@ def render_metrics() -> None:
 # Header
 # ---------------------------------------------------------------------------
 
-st.markdown('<h1 class="main-header">🌾 Grameen Seva AI Hub</h1>', unsafe_allow_html=True)
+st.markdown('<div class="brand-mark" aria-label="Agriculture logo">🌾</div>', unsafe_allow_html=True)
+st.markdown('<h1 class="main-header">Grameen Seva AI Hub</h1>', unsafe_allow_html=True)
 st.markdown(
     '<p class="main-subtitle">Voice-First Government Subsidy Finder for Indian Farmers</p>',
     unsafe_allow_html=True,
 )
+
+language_names = {
+    "hi": "हिन्दी",
+    "te": "తెలుగు",
+    "ta": "தமிழ்",
+    "kn": "ಕನ್ನಡ",
+    "mr": "मराठी",
+    "bn": "বাংলা",
+    "gu": "ગુજરાતી",
+    "pa": "ਪੰਜਾਬੀ",
+}
+detected_code = (st.session_state.conversation.language_code or "").lower()
+detected_name = next((name for code, name in language_names.items() if detected_code.startswith(code)), "")
+if detected_name:
+    st.markdown(
+        f'<div class="language-badge">🟢 Language detected: {html.escape(detected_name)}</div>',
+        unsafe_allow_html=True,
+    )
 
 missing = missing_secrets()
 if missing:
@@ -885,7 +953,7 @@ if not conversation.turns:
     )
 if conversation.turns:
     st.markdown('<div class="chat-shell">', unsafe_allow_html=True)
-    for turn in conversation.turns:
+    for turn in reversed(conversation.turns):
         role = "farmer" if turn["role"] == "farmer" else "assistant"
         label = "You" if role == "farmer" else "Grameen Seva AI"
         text = html.escape(turn["text"])

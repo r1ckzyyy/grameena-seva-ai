@@ -30,7 +30,38 @@ def _gemini_client(api_key: str) -> Any:
     return genai.Client(api_key=api_key)
 
 
-def _parse(text: str) -> dict[str, Any]:
+def _localized_fallback(language: str, kind: str = "temporary") -> str:
+    code = (language or "").lower()
+    messages = {
+        "hi": {
+            "temporary": "क्षमा करें, अभी थोड़ी तकनीकी समस्या है। कृपया कुछ देर बाद फिर बोलें।",
+            "repeat": "कृपया अपनी खेती की ज़रूरत के बारे में एक और जानकारी बताइए।",
+            "prompt": "कृपया बताइए कि आपको खेती में किस सहायता की ज़रूरत है।",
+        },
+        "te": {
+            "temporary": "క్షమించండి, ప్రస్తుతం ఒక సాంకేతిక సమస్య ఉంది. కొద్దిసేపటి తర్వాత మళ్లీ మాట్లాడండి.",
+            "repeat": "దయచేసి మీ వ్యవసాయ అవసరం గురించి మరో వివరాన్ని చెప్పండి.",
+            "prompt": "మీ వ్యవసాయానికి ఏ సహాయం కావాలో దయచేసి చెప్పండి.",
+        },
+        "ta": {
+            "temporary": "மன்னிக்கவும், தற்போது ஒரு தொழில்நுட்ப சிக்கல் உள்ளது. சிறிது நேரம் கழித்து மீண்டும் பேசுங்கள்.",
+            "repeat": "உங்கள் விவசாயத் தேவையைப் பற்றி இன்னொரு தகவலைச் சொல்லுங்கள்.",
+            "prompt": "உங்கள் விவசாயத்திற்கு என்ன உதவி வேண்டும் என்று சொல்லுங்கள்.",
+        },
+    }
+    language_messages = next((value for key, value in messages.items() if code.startswith(key)), None)
+    if language_messages:
+        return language_messages[kind]
+    if code.startswith("hi"):
+        return messages["hi"][kind]
+    return {
+        "temporary": "I am having a temporary connection problem. Please speak again in a moment.",
+        "repeat": "Please tell me one more detail about your farming need.",
+        "prompt": "Please tell me what farming support you need.",
+    }[kind]
+
+
+def _parse(text: str, language: str) -> dict[str, Any]:
     cleaned = text.strip()
     fenced = re.search(r"```(?:json)?\s*([\s\S]*?)\s*```", cleaned)
     if fenced:
@@ -46,7 +77,9 @@ def _parse(text: str) -> dict[str, Any]:
                 pass
     return {
         "conversation_complete": False,
-        "voice_response": cleaned[:500] or "Please tell me what farming support you need.",
+        # A malformed response must not leak an English diagnostic into a
+        # non-English conversation.
+        "voice_response": _localized_fallback(language, "temporary"),
         "next_question": "",
     }
 
@@ -160,7 +193,7 @@ def run_conversation(state: ConversationState, gemini_key: str, tavily_key: str,
             parts = candidate.content.parts if candidate and candidate.content else []
             calls = [part.function_call for part in parts if part.function_call]
             if not calls:
-                result = AgentResult.from_dict(_parse(response.text or ""), detected)
+                result = AgentResult.from_dict(_parse(response.text or "", detected), detected)
                 state.farmer_profile.update({
                     "language": result.language or detected,
                     "state": result.state,
@@ -186,8 +219,8 @@ def run_conversation(state: ConversationState, gemini_key: str, tavily_key: str,
         return AgentResult(
             language=detected,
             conversation_complete=False,
-            voice_response="I am having a temporary connection problem. Please wait a moment and speak again.",
+            voice_response=_localized_fallback(detected, "temporary"),
             missing_criteria=["temporary assistant connection problem"],
         )
 
-    return AgentResult(language=detected, voice_response="I need one more detail before I continue.")
+    return AgentResult(language=detected, voice_response=_localized_fallback(detected, "repeat"))
