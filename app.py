@@ -537,12 +537,11 @@ def run_agent(transcript: str, state: str, category: str, language_code: str) ->
 
     for _ in range(8):
         response = client.models.generate_content(
-            model="gemini-2.5-flash",
+            model="gemini-3.5-flash-lite",
             contents=contents,
             config=types.GenerateContentConfig(
                 system_instruction=SYSTEM_PROMPT,
                 tools=_tools(),
-                temperature=0.2,
             ),
         )
         candidate = response.candidates[0]

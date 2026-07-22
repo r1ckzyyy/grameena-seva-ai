@@ -14,6 +14,29 @@ from models.conversation import AgentResult, ConversationState
 from services.research import get_scheme_details, search_schemes
 
 
+MODEL_PREFERENCES = (
+    "gemini-flash-latest",
+    "gemini-3.5-flash-lite",
+    "gemini-3.6-flash",
+    "gemini-3.1-flash-lite",
+)
+
+
+def _available_model(client: Any) -> str:
+    """Choose a current Flash model enabled for this specific API key."""
+    available = {
+        str(getattr(model, "name", "")).removeprefix("models/")
+        for model in client.models.list()
+    }
+    for preferred in MODEL_PREFERENCES:
+        if preferred in available:
+            return preferred
+    raise RuntimeError(
+        "No supported Gemini Flash model is enabled for this API key. "
+        "Enable a current Gemini Flash model in Google AI Studio."
+    )
+
+
 def _parse(text: str) -> dict[str, Any]:
     cleaned = text.strip()
     fenced = re.search(r"```(?:json)?\s*([\s\S]*?)\s*```", cleaned)
@@ -71,20 +94,22 @@ def _run_tool(name: str, args: dict[str, Any], state: ConversationState, keys: d
     return json.dumps({"error": "Unknown tool"})
 
 
-def _generate(client: Any, prompt: str, system: str, tools: list[types.Tool] | None = None) -> str:
+def _generate(client: Any, model: str, prompt: str, system: str, tools: list[types.Tool] | None = None) -> str:
     response = client.models.generate_content(
-        model="gemini-2.5-flash",
+        model=model,
         contents=[types.Content(role="user", parts=[types.Part(text=prompt)])],
-        config=types.GenerateContentConfig(system_instruction=system, tools=tools or [], temperature=0.2),
+        config=types.GenerateContentConfig(system_instruction=system, tools=tools or []),
     )
     return response.text or ""
 
 
 def run_conversation(state: ConversationState, gemini_key: str, tavily_key: str, firecrawl_key: str) -> AgentResult:
     client = genai.Client(api_key=gemini_key)
+    model = _available_model(client)
     detected = state.language_code or "unknown"
     extraction = _parse(_generate(
         client,
+        model,
         f"Detected language: {detected}\nConversation:\n{_history(state)}",
         EXTRACTION_PROMPT,
     ))
@@ -98,9 +123,9 @@ def run_conversation(state: ConversationState, gemini_key: str, tavily_key: str,
     ))])]
     for _ in range(8):
         response = client.models.generate_content(
-            model="gemini-2.5-flash",
+            model=model,
             contents=contents,
-            config=types.GenerateContentConfig(system_instruction=RESEARCH_PROMPT, tools=_tool_declarations(), temperature=0.2),
+            config=types.GenerateContentConfig(system_instruction=RESEARCH_PROMPT, tools=_tool_declarations()),
         )
         candidate = response.candidates[0]
         parts = candidate.content.parts if candidate.content else []
