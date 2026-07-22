@@ -105,26 +105,58 @@ st.markdown(
         font-size: 1.15rem;
         margin: 0.75rem 0 1.5rem;
     }
+    .status-message {
+        max-width: 30rem;
+        margin: 0.75rem auto;
+        padding: 0.9rem 1rem;
+        border-radius: 12px;
+        background: #FFFDE7;
+        border: 2px solid #F9A825;
+        color: #5D4037;
+        text-align: center;
+        font-size: 1.15rem;
+        font-weight: 700;
+    }
     div[data-testid="stAudioInput"] {
-        display: flex;
-        justify-content: center;
+        max-width: 30rem;
+        margin: 0 auto;
+        padding: 1rem 1.25rem 0.75rem;
         background: transparent;
         border: 0;
     }
     div[data-testid="stAudioInput"] button {
-        width: 9rem !important;
-        height: 9rem !important;
-        min-height: 9rem !important;
-        border-radius: 50% !important;
+        min-height: 2.75rem !important;
+        border-radius: 0.75rem !important;
+        background: #FFFFFF !important;
+        color: #1B5E20 !important;
+        border: 2px solid #A5D6A7 !important;
+        box-shadow: none !important;
+        font-size: 1rem !important;
+    }
+    div[data-testid="stAudioInput"] button:first-of-type {
+        width: 100% !important;
+        min-height: 5.5rem !important;
+        border-radius: 1.25rem !important;
         background: #2E7D32 !important;
         color: #FFFFFF !important;
         border: 0 !important;
-        box-shadow: 0 10px 28px rgba(46, 125, 50, 0.35) !important;
-        font-size: 1.25rem !important;
+        box-shadow: 0 8px 20px rgba(46, 125, 50, 0.3) !important;
+        font-size: 1.35rem !important;
+        font-weight: 800 !important;
     }
     div[data-testid="stAudioInput"] button:hover {
         background: #1B5E20 !important;
-        transform: scale(1.03);
+    }
+    div[data-testid="stAudioInput"] button:not(:first-of-type) {
+        display: none !important;
+    }
+    div[data-testid="stAudioInput"] label {
+        display: block !important;
+        text-align: center;
+        font-size: 1.1rem !important;
+        font-weight: 800 !important;
+        color: #1B5E20 !important;
+        margin-bottom: 0.5rem;
     }
     .chat-shell {
         max-width: 900px;
@@ -232,11 +264,6 @@ st.markdown(
         font-weight: 700;
         color: #E65100;
         margin-top: 1rem;
-    }
-    div[data-testid="stAudioInput"] label {
-        display: none !important;
-        font-weight: 700 !important;
-        color: #2E7D32 !important;
     }
     div[data-testid="stSelectbox"] label,
     div[data-testid="column"] label {
@@ -691,9 +718,15 @@ st.markdown('<div class="mic-help">I will detect your language and ask one quest
 mic_col_left, mic_col_center, mic_col_right = st.columns([1, 2, 1])
 with mic_col_center:
     # Streamlit 1.45+ defaults this widget to 16 kHz.
-    audio = st.audio_input("Microphone", key="kiosk_mic")
+    audio = st.audio_input("🎙️ Tap once to speak • tap again when finished", key="kiosk_mic")
 
 conversation: ConversationState = st.session_state.conversation
+if not conversation.turns:
+    st.markdown(
+        '<div class="status-message">🎙️ Start by tapping the green button, speak in your language, '
+        'then tap it again when you finish.</div>',
+        unsafe_allow_html=True,
+    )
 if conversation.turns:
     st.markdown('<div class="chat-shell">', unsafe_allow_html=True)
     for turn in conversation.turns:
