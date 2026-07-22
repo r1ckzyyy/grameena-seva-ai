@@ -2,50 +2,69 @@
 <html>
 <head>
   <meta charset="utf-8" />
+  <meta content="width=device-width, initial-scale=1.0" name="viewport">
+  <script src="https://cdn.tailwindcss.com?plugins=forms,container-queries"></script>
+  <link href="https://fonts.googleapis.com/css2?family=Montserrat:wght@400;600;700&family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
+  <link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&display=swap" rel="stylesheet">
   <style>
-    html, body { margin: 0; background: transparent; font-family: sans-serif; }
-    #root { display: flex; flex-direction: column; justify-content: center; align-items: center; min-height: 250px; gap: 10px; }
-    button {
-      width: 200px; height: 200px; border: 0; border-radius: 50%; cursor: pointer;
-      color: white; background: radial-gradient(circle at 35% 25%, #66bb6a, #2e7d32 68%, #1b5e20);
-      font-size: 4.5rem; line-height: 1; font-weight: 800;
-      box-shadow: 0 0 0 12px rgba(250,189,0,.28), 0 12px 30px rgba(46,125,50,.32);
-      animation: breathe 1.8s ease-in-out infinite;
+    html, body { margin: 0; background: transparent; overflow: hidden; font-family: 'Inter', sans-serif; }
+    .pulse-amber {
+      animation: pulse-ring 2s cubic-bezier(0.215, 0.61, 0.355, 1) infinite;
     }
-    button:hover { background: #1b5e20; }
-    .hint { color: #546e7a; font-size: 14px; font-weight: 700; }
-    .orb { width: 200px; height: 200px; display: grid; place-items: center; border-radius: 50%; color: white; background: radial-gradient(circle at 35% 25%, #66bb6a, #2e7d32 68%, #1b5e20); font-size: 5rem; box-shadow: 0 0 0 12px rgba(250,189,0,.28), 0 12px 30px rgba(46,125,50,.32); }
-    .live { animation: breathe 1.1s ease-in-out infinite, glow 2s ease-out infinite; }
-    @keyframes breathe { 0%,100% { transform: scale(.98); } 50% { transform: scale(1.03); } }
-    @keyframes glow { 0% { box-shadow: 0 0 0 10px rgba(165,214,167,.4), 0 0 0 10px rgba(46,125,50,.25); } 100% { box-shadow: 0 0 0 30px rgba(165,214,167,0), 0 0 0 50px rgba(46,125,50,0); } }
+    @keyframes pulse-ring {
+      0% { transform: scale(0.95); box-shadow: 0 0 0 0 rgba(250, 189, 0, 0.7); }
+      70% { transform: scale(1.02); box-shadow: 0 0 0 20px rgba(250, 189, 0, 0); }
+      100% { transform: scale(0.95); box-shadow: 0 0 0 0 rgba(250, 189, 0, 0); }
+    }
+    .fade-in-up {
+      animation: fadeInUp 0.4s ease-out forwards;
+      opacity: 0;
+      transform: translateY(10px);
+    }
+    @keyframes fadeInUp {
+      to { opacity: 1; transform: translateY(0); }
+    }
   </style>
 </head>
-<body>
-  <div id="root"><button id="start">Tap once to start</button></div>
+<body class="flex flex-col items-center justify-center min-h-[300px]">
+  <div id="root" class="w-full flex flex-col items-center justify-center min-h-[300px] bg-transparent overflow-hidden">
+    <!-- Status Card -->
+    <div id="status-card" class="bg-[#fabd00] text-[#5b4300] px-6 py-2 rounded-full text-[14px] font-semibold flex items-center gap-2 mb-4 shadow-md transition-all duration-300">
+      <span id="status-icon" class="material-symbols-outlined text-[18px]">graphic_eq</span>
+      <span id="status-text">🎙️ Tap to start</span>
+    </div>
+    <!-- Mic Button -->
+    <button id="mic-btn" class="relative w-[180px] h-[180px] rounded-full flex items-center justify-center bg-[#fabd00] shadow-[0_10px_40px_rgba(250,189,0,0.4)] transition-transform active:scale-95 pulse-amber group outline-none border-0">
+      <div class="absolute inset-2 rounded-full overflow-hidden mix-blend-overlay opacity-60">
+        <canvas id="shader-canvas" class="w-full h-full" style="display:block;width:100%;height:100%"></canvas>
+      </div>
+      <span id="mic-icon" class="material-symbols-outlined text-[70px] text-[#0d631b] relative z-10 drop-shadow-md select-none">mic</span>
+    </button>
+    <!-- Hint Text -->
+    <p id="hint-text" class="text-[15px] font-semibold text-[#40493d] mt-3 opacity-70">Tap once to speak</p>
+  </div>
+
   <script>
     const root = document.getElementById("root");
-    const startButton = document.getElementById("start");
+    const statusCard = document.getElementById("status-card");
+    const statusIcon = document.getElementById("status-icon");
+    const statusText = document.getElementById("status-text");
+    const micBtn = document.getElementById("mic-btn");
+    const micIcon = document.getElementById("mic-icon");
+    const hintText = document.getElementById("hint-text");
+    const canvas = document.getElementById('shader-canvas');
+
     let args = {};
     let stream = null;
     let recorder = null;
-    let analyser = null;
-    let raf = null;
     let chunks = [];
-    let speaking = false;
-    let silenceSince = 0;
-    let started = false;
-    let lastTtsToken = -1;
-    let audioElement = null;
+    let state = "idle"; // "idle", "recording", "processing", "disabled"
 
     function send(value) {
       window.parent.postMessage({isStreamlitMessage: true, type: "streamlit:setComponentValue", value}, "*");
     }
     function setHeight() {
-      window.parent.postMessage({isStreamlitMessage: true, type: "streamlit:setFrameHeight", height: 250}, "*");
-    }
-    function show(text) {
-      root.innerHTML = "<div class='orb live'>🎙️</div><span class='hint'>" + text + "</span>";
-      setHeight();
+      window.parent.postMessage({isStreamlitMessage: true, type: "streamlit:setFrameHeight", height: 320}, "*");
     }
     function encode(buffer) {
       const bytes = new Uint8Array(buffer);
@@ -55,82 +74,172 @@
       return btoa(binary);
     }
     function stopTracks() {
-      if (raf) cancelAnimationFrame(raf);
-      raf = null;
       if (stream) stream.getTracks().forEach(track => track.stop());
       stream = null;
       recorder = null;
-      analyser = null;
-      speaking = false;
-      silenceSince = 0;
     }
     async function beginListening() {
       if (!args.active || stream) return;
       try {
         stream = await navigator.mediaDevices.getUserMedia({audio: true});
-        const context = new AudioContext();
-        const source = context.createMediaStreamSource(stream);
-        analyser = context.createAnalyser();
-        analyser.fftSize = 512;
-        source.connect(analyser);
         chunks = [];
         recorder = new MediaRecorder(stream);
         recorder.ondataavailable = event => { if (event.data.size) chunks.push(event.data); };
         recorder.onstop = async () => {
-          const blob = new Blob(chunks, {type: recorder.mimeType || "audio/webm"});
+          const blob = new Blob(chunks, {type: "audio/webm"});
           const buffer = await blob.arrayBuffer();
           stopTracks();
-          if (blob.size > 1000) send({event: "audio", audio: encode(buffer), id: Date.now()});
-          else if (args.active) beginListening();
+          if (blob.size > 1000) {
+            send({event: "audio", audio: encode(buffer), id: Date.now()});
+            setUIState("processing");
+          } else {
+            setUIState("idle");
+            send({event: "error", message: "No speech was captured."});
+          }
         };
         recorder.start();
-        started = true;
+        setUIState("recording");
         send({event: "listening", id: Date.now()});
-        show("🎤 Listening — speak naturally");
-        monitor();
       } catch (error) {
-        show("Microphone permission is required");
+        setUIState("idle");
         send({event: "error", message: String(error)});
       }
     }
-    function monitor() {
-      if (!analyser || !recorder || recorder.state !== "recording") return;
-      const data = new Uint8Array(analyser.fftSize);
-      analyser.getByteTimeDomainData(data);
-      let sum = 0;
-      for (const value of data) { const n = (value - 128) / 128; sum += n * n; }
-      const rms = Math.sqrt(sum / data.length);
-      const now = performance.now();
-      if (rms > 0.025) { speaking = true; silenceSince = 0; }
-      else if (speaking) {
-        if (!silenceSince) silenceSince = now;
-        if (now - silenceSince >= 2000) { recorder.stop(); return; }
+    function stopListening() {
+      if (recorder && recorder.state === "recording") {
+        setUIState("processing");
+        recorder.stop();
       }
-      raf = requestAnimationFrame(monitor);
     }
-    function playTts(audioBase64, token) {
-      if (!audioBase64 || token === lastTtsToken) return Promise.resolve();
-      lastTtsToken = token;
-      stopTracks();
-      return new Promise(resolve => {
-        audioElement = new Audio("data:audio/wav;base64," + audioBase64);
-        audioElement.onended = () => {
-          audioElement = null; resolve();
-          if (args.resume_after_tts && args.active) beginListening();
-          else if (!args.resume_after_tts) { show("Conversation complete"); send({event: "completed", id: Date.now()}); }
-        };
-        audioElement.onerror = () => { audioElement = null; resolve(); if (args.resume_after_tts && args.active) beginListening(); };
-        audioElement.play().catch(() => { resolve(); if (args.resume_after_tts && args.active) beginListening(); });
-      });
+
+    micBtn.onclick = () => {
+      if (state === "idle") {
+        beginListening();
+      } else if (state === "recording") {
+        stopListening();
+      }
+    };
+
+    function setUIState(s) {
+      state = s;
+      if (state === "idle") {
+        statusCard.className = "bg-[#fabd00] text-[#5b4300] px-6 py-2 rounded-full text-[14px] font-semibold flex items-center gap-2 mb-4 shadow-md fade-in-up";
+        statusIcon.className = "material-symbols-outlined";
+        statusIcon.textContent = "graphic_eq";
+        statusText.textContent = "🎙️ Tap to start";
+        micBtn.className = "relative w-[180px] h-[180px] rounded-full flex items-center justify-center bg-[#fabd00] shadow-[0_10px_40px_rgba(250,189,0,0.4)] transition-transform active:scale-95 pulse-amber group outline-none border-0";
+        micIcon.textContent = "mic";
+        hintText.textContent = "Tap once to speak";
+        micBtn.disabled = false;
+      } else if (state === "recording") {
+        statusCard.className = "bg-[#fabd00] text-[#5b4300] px-6 py-2 rounded-full text-[14px] font-semibold flex items-center gap-2 mb-4 shadow-md pulse-amber fade-in-up";
+        statusIcon.className = "material-symbols-outlined animate-pulse";
+        statusIcon.textContent = "graphic_eq";
+        statusText.textContent = "🎤 Listening...";
+        micBtn.className = "relative w-[180px] h-[180px] rounded-full flex items-center justify-center bg-[#fabd00] shadow-[0_10px_40px_rgba(250,189,0,0.6)] transition-transform active:scale-95 group outline-none border-0";
+        micIcon.textContent = "stop";
+        hintText.textContent = "Tap to stop recording";
+        micBtn.disabled = false;
+      } else if (state === "processing") {
+        statusCard.className = "bg-[#f0eded] text-[#40493d] px-6 py-2 rounded-full text-[14px] font-semibold flex items-center gap-2 mb-4 shadow-md fade-in-up";
+        statusIcon.className = "material-symbols-outlined animate-spin";
+        statusIcon.textContent = "progress_activity";
+        statusText.textContent = "📝 Preparing...";
+        micBtn.className = "relative w-[180px] h-[180px] rounded-full flex items-center justify-center bg-[#f0eded] shadow-md transition-transform group opacity-60 outline-none border-0";
+        micIcon.textContent = "hourglass_empty";
+        hintText.textContent = "Thinking...";
+        micBtn.disabled = true;
+      } else if (state === "disabled") {
+        statusCard.className = "bg-[#f0eded] text-[#40493d] px-6 py-2 rounded-full text-[14px] font-semibold flex items-center gap-2 mb-4 shadow-md fade-in-up";
+        statusIcon.className = "material-symbols-outlined";
+        statusIcon.textContent = "check_circle";
+        statusText.textContent = "✅ Done";
+        micBtn.className = "relative w-[180px] h-[180px] rounded-full flex items-center justify-center bg-[#f0eded] shadow-md transition-transform group opacity-40 outline-none border-0";
+        micIcon.textContent = "check";
+        hintText.textContent = "Conversation complete";
+        micBtn.disabled = true;
+      }
     }
+
     function render(newArgs) {
       args = newArgs || {};
       setHeight();
-      if (!args.active && !args.tts_audio) { stopTracks(); show("Conversation complete"); return; }
-      if (args.tts_audio && args.tts_token !== lastTtsToken) { playTts(args.tts_audio, args.tts_token); return; }
-      if (args.auto_start && !stream && !audioElement) beginListening();
-      else if (!started) { root.innerHTML = "<button id='start'>🎙️</button><span class='hint'>Tap once to start</span>"; document.getElementById("start").onclick = beginListening; }
+      if (!args.active) {
+        stopTracks();
+        setUIState("disabled");
+      } else {
+        if (state === "disabled" || state === "processing") {
+          setUIState("idle");
+        }
+      }
     }
+
+    // WebGL Shader Animation Setup
+    const gl = canvas.getContext('webgl') || canvas.getContext('experimental-webgl');
+    if (gl) {
+      const vs = `attribute vec2 a_position;
+varying vec2 v_texCoord;
+void main() {
+  v_texCoord = a_position * 0.5 + 0.5;
+  gl_Position = vec4(a_position, 0.0, 1.0);
+}`;
+      const fs = `precision highp float;
+varying vec2 v_texCoord;
+uniform float u_time;
+uniform vec2 u_resolution;
+
+void main() {
+    vec2 uv = v_texCoord;
+    vec3 color1 = vec3(0.968, 0.980, 0.961); // #F7FAF5
+    vec3 color2 = vec3(0.890, 0.949, 0.992); // #E3F2FD
+    float noise = sin(uv.x * 2.0 + u_time * 0.2) * cos(uv.y * 2.0 + u_time * 0.3) * 0.5 + 0.5;
+    vec3 finalColor = mix(color1, color2, noise * 0.3);
+    gl_FragColor = vec4(finalColor, 1.0);
+}`;
+      function cs(type, src) {
+        const s = gl.createShader(type);
+        gl.shaderSource(s, src);
+        gl.compileShader(s);
+        return s;
+      }
+      const prog = gl.createProgram();
+      gl.attachShader(prog, cs(gl.VERTEX_SHADER, vs));
+      gl.attachShader(prog, cs(gl.FRAGMENT_SHADER, fs));
+      gl.linkProgram(prog);
+      gl.useProgram(prog);
+      const buf = gl.createBuffer();
+      gl.bindBuffer(gl.ARRAY_BUFFER, buf);
+      gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([-1,-1, 1,-1, -1,1, 1,1]), gl.STATIC_DRAW);
+      const pos = gl.getAttribLocation(prog, 'a_position');
+      gl.enableVertexAttribArray(pos);
+      gl.vertexAttribPointer(pos, 2, gl.FLOAT, false, 0, 0);
+      const uTime = gl.getUniformLocation(prog, 'u_time');
+      const uRes = gl.getUniformLocation(prog, 'u_resolution');
+
+      function syncSize() {
+        const w = canvas.clientWidth  || 184;
+        const h = canvas.clientHeight || 184;
+        if (canvas.width !== w || canvas.height !== h) {
+          canvas.width  = w;
+          canvas.height = h;
+        }
+      }
+      if (typeof ResizeObserver !== 'undefined') {
+        new ResizeObserver(syncSize).observe(canvas);
+      }
+      syncSize();
+
+      function renderShader(t) {
+        if (typeof ResizeObserver === 'undefined') syncSize();
+        gl.viewport(0, 0, canvas.width, canvas.height);
+        if (uTime) gl.uniform1f(uTime, t * 0.001);
+        if (uRes) gl.uniform2f(uRes, canvas.width, canvas.height);
+        gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
+        requestAnimationFrame(renderShader);
+      }
+      renderShader(0);
+    }
+
     window.addEventListener("message", event => {
       if (event.data && event.data.type === "streamlit:render") render(event.data.args);
     });

@@ -48,6 +48,8 @@ for key, default in {
     "tts_token": 0,
     "last_component_event_id": None,
     "conversation": ConversationState(),
+    "last_played_tts_token": -1,
+    "error_message": None,
 }.items():
     st.session_state.setdefault(key, default)
 
@@ -57,405 +59,159 @@ for key, default in {
 
 st.markdown(
     """
-<style>
-    .stApp {
-        background: #FCF9F8;
-        color: #1B1B1B;
-        font-family: Inter, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
-    }
-    .stApp::after {
-        content: "";
-        position: fixed;
-        z-index: 998;
-        left: 0;
-        right: 0;
-        bottom: 0;
-        height: 250px;
-        pointer-events: none;
-        background: linear-gradient(to top, #FCF9F8 25%, rgba(252,249,248,0.92) 58%, rgba(252,249,248,0));
-    }
-    section[data-testid="stMain"] > div {
-        max-width: 800px;
-        margin: 0 auto;
-    }
-    .block-container {
-        max-width: 800px !important;
-        padding: 2.5rem 1.5rem 19rem !important;
-    }
-    .main-header {
-        text-align: center;
-        color: #0D631B;
-        font-family: Montserrat, Inter, sans-serif;
-        font-size: 2rem;
-        font-weight: 900;
-        letter-spacing: 0.5px;
-        margin: 0.25rem 0 0.35rem 0;
-        line-height: 1.15;
-    }
-    .brand-mark {
-        width: 58px;
-        height: 58px;
-        display: grid;
-        place-items: center;
-        margin: 0.8rem auto 0;
-        border-radius: 50%;
-        background: #E8F5E9;
-        border: 2px solid #A5D6A7;
-        box-shadow: 0 8px 20px rgba(46, 125, 50, 0.12);
-        font-size: 2rem;
-    }
-    .main-subtitle {
-        text-align: center;
-        color: #2E7D32;
-        font-size: 1.35rem;
-        font-weight: 600;
-        margin-bottom: 2.25rem;
-        font-family: Inter, sans-serif;
-        font-size: 1.05rem;
-    }
-    .language-badge {
-        width: fit-content;
-        margin: 0 auto 0.6rem;
-        padding: 0.35rem 0.8rem;
-        border-radius: 999px;
-        background: #E8F5E9;
-        border: 1px solid #A5D6A7;
-        color: #1B5E20;
-        font-size: 0.9rem;
-        font-weight: 800;
-    }
-    .panel-title {
-        color: #2E7D32;
-        font-size: 1.8rem;
-        font-weight: 800;
-        border-bottom: 4px solid #2E7D32;
-        padding-bottom: 0.5rem;
-        margin-bottom: 1.25rem;
-    }
-    .control-box {
-        background: #FFFFFF;
-        border: 2px solid #A5D6A7;
-        border-radius: 16px;
-        padding: 1.5rem;
-        margin-bottom: 1rem;
-        box-shadow: 0 6px 18px rgba(46, 125, 50, 0.12);
-    }
-    .mic-heading {
-        text-align: center;
-        color: #1B5E20;
-        font-size: 1.6rem;
-        font-weight: 800;
-        margin: 1rem 0 0.75rem;
-    }
-    .mic-help {
-        text-align: center;
-        position: fixed;
-        z-index: 1001;
-        left: 50%;
-        bottom: 14rem;
-        transform: translateX(-50%);
-        color: #5B4300;
-        background: #FABD00;
-        border-radius: 999px;
-        padding: 0.45rem 1rem;
-        font-size: 0.88rem;
-        font-weight: 800;
-        box-shadow: 0 8px 20px rgba(250, 189, 0, 0.22);
-        white-space: nowrap;
-    }
-    .mic-stage {
-        position: relative;
-        width: 230px;
-        height: 230px;
-        margin: 1.25rem auto 0.5rem;
-        display: grid;
-        place-items: center;
-    }
-    .mic-stage::before,
-    .mic-stage::after {
-        content: "";
-        position: absolute;
-        inset: 8px;
-        border: 3px solid rgba(46, 125, 50, 0.28);
-        border-radius: 50%;
-        animation: mic-pulse 2.2s ease-out infinite;
-    }
-    .mic-stage::after {
-        animation-delay: 1.1s;
-    }
-    .mic-orb {
-        position: relative;
-        z-index: 1;
-        width: 150px;
-        height: 150px;
-        display: grid;
-        place-items: center;
-        border-radius: 50%;
-        color: #FFFFFF;
-        background: radial-gradient(circle at 35% 25%, #66BB6A, #2E7D32 68%, #1B5E20);
-        box-shadow: 0 12px 30px rgba(46, 125, 50, 0.32), 0 0 0 12px rgba(165, 214, 167, 0.34);
-        animation: mic-breathe 1.8s ease-in-out infinite;
-        font-size: 4.5rem;
-        line-height: 1;
-    }
-    .mic-orb span {
-        transform: translateY(-2px);
-        filter: drop-shadow(0 2px 2px rgba(0,0,0,0.18));
-    }
-    @keyframes mic-pulse {
-        0% { transform: scale(0.72); opacity: 0.85; }
-        75%, 100% { transform: scale(1.08); opacity: 0; }
-    }
-    @keyframes mic-breathe {
-        0%, 100% { transform: scale(0.98); }
-        50% { transform: scale(1.03); }
-    }
-    div[data-testid="stCustomComponentV1"] {
-        max-width: 260px;
-        min-height: 58px;
-        margin: -2.5rem auto 1rem;
-        position: relative;
-        z-index: 2;
-        text-align: center;
-    }
-    .status-message {
-        max-width: 30rem;
-        margin: 0.75rem auto;
-        padding: 0.9rem 1rem;
-        border-radius: 12px;
-        background: #FFFDE7;
-        border: 2px solid #F9A825;
-        color: #5D4037;
-        text-align: center;
-        font-size: 1.15rem;
-        font-weight: 700;
-    }
-    div[data-testid="stAudioInput"] {
-        max-width: 30rem;
-        margin: 0 auto;
-        padding: 1rem 1.25rem 0.75rem;
-        background: transparent;
-        border: 0;
-    }
-    div[data-testid="stAudioInput"] button {
-        min-height: 2.75rem !important;
-        border-radius: 0.75rem !important;
-        background: #FFFFFF !important;
-        color: #1B5E20 !important;
-        border: 2px solid #A5D6A7 !important;
-        box-shadow: none !important;
-        font-size: 1rem !important;
-    }
-    div[data-testid="stAudioInput"] button:first-of-type {
-        width: 100% !important;
-        min-height: 5.5rem !important;
-        border-radius: 1.25rem !important;
-        background: #2E7D32 !important;
-        color: #FFFFFF !important;
-        border: 0 !important;
-        box-shadow: 0 8px 20px rgba(46, 125, 50, 0.3) !important;
-        font-size: 1.35rem !important;
-        font-weight: 800 !important;
-    }
-    div[data-testid="stAudioInput"] button:hover {
-        background: #1B5E20 !important;
-    }
-    div[data-testid="stAudioInput"] button:not(:first-of-type) {
-        display: inline-flex !important;
-        width: 3rem !important;
-        min-height: 2.5rem !important;
-        margin: 0.5rem 0.25rem 0;
-        padding: 0.4rem !important;
-    }
-    /* Keep Streamlit's recorder lifecycle intact; only make the primary control compact. */
-    div[data-testid="stAudioInput"] button:first-of-type {
-        width: auto !important;
-        min-height: 2.75rem !important;
-        border-radius: 0.75rem !important;
-        box-shadow: none !important;
-        font-size: 1rem !important;
-    }
-    div[data-testid="stAudioInput"] label {
-        display: block !important;
-        text-align: center;
-        font-size: 1.1rem !important;
-        font-weight: 800 !important;
-        color: #1B5E20 !important;
-        margin-bottom: 0.5rem;
-    }
-    .chat-shell {
-        max-width: 760px;
-        max-height: 48vh;
-        overflow-y: auto;
-        display: flex;
-        flex-direction: column-reverse;
-        gap: 0.2rem;
-        margin: 0 auto 2rem;
-        padding: 0.25rem 0.5rem;
-        scroll-behavior: smooth;
-    }
-    .chat-bubble {
-        padding: 1rem 1.25rem;
-        border-radius: 1.5rem;
-        margin: 0.45rem 0;
-        font-size: 1.05rem;
-        line-height: 1.55;
-        white-space: pre-wrap;
-        box-shadow: 0 8px 22px rgba(46, 125, 50, 0.08);
-        animation: chat-in 0.35s ease-out both;
-    }
-    @keyframes chat-in { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: translateY(0); } }
-    .chat-bubble.farmer {
-        margin-left: 18%;
-        background: #81C784;
-        border: 0;
-        color: #FFFFFF;
-        border-top-right-radius: 0.35rem;
-    }
-    .chat-bubble.assistant {
-        margin-right: 10%;
-        background: rgba(255, 255, 255, 0.94);
-        border: 1px solid rgba(191, 202, 186, 0.65);
-        color: #1B1B1B;
-        border-top-left-radius: 0.35rem;
-        box-shadow: 0 10px 30px rgba(46, 125, 50, 0.08);
-    }
-    .chat-label {
-        display: block;
-        font-size: 0.9rem;
-        font-weight: 800;
-        margin-bottom: 0.25rem;
-        opacity: 0.8;
-    }
-    .documents-box {
-        background: #FFFFFF;
-        border: 2px solid #A5D6A7;
-        border-radius: 16px;
-        padding: 1.25rem 1.5rem;
-        margin-top: 1.25rem;
-        font-size: 1.2rem;
-        color: #1B5E20;
-    }
-    .transcript-box {
-        background: #E3F2FD;
-        border-left: 8px solid #1565C0;
-        border-radius: 12px;
-        padding: 1.25rem 1.5rem;
-        font-size: 1.45rem;
-        font-weight: 600;
-        color: #0D47A1;
-        line-height: 1.5;
-        margin-bottom: 1.5rem;
-    }
-    .metric-grid {
-        display: grid;
-        grid-template-columns: repeat(2, 1fr);
-        gap: 1.25rem;
-        margin: 1.25rem 0;
-        padding: 1.25rem;
-        background: rgba(255, 255, 255, 0.94);
-        border: 1px solid rgba(191, 202, 186, 0.65);
-        border-radius: 1.5rem;
-        box-shadow: 0 15px 40px rgba(46, 125, 50, 0.12);
-    }
-    .metric-card {
-        background: #FFFFFF;
-        border-radius: 16px;
-        padding: 1.5rem;
-        text-align: center;
-        box-shadow: 0 8px 24px rgba(0, 0, 0, 0.08);
-        border: 1px solid #D6E6D3;
-        border-top: 5px solid #2E7D32;
-    }
-    .metric-card.warning {
-        border-top-color: #F9A825;
-        background: #FFFDE7;
-    }
-    .metric-label {
-        font-size: 1.1rem;
-        font-weight: 700;
-        color: #546E7A;
-        text-transform: uppercase;
-        letter-spacing: 0.5px;
-        margin-bottom: 0.5rem;
-    }
-    .metric-value {
-        font-size: 2.6rem;
-        font-weight: 900;
-        color: #1B5E20;
-        line-height: 1.15;
-    }
-    .metric-value.highlight {
-        font-size: 3.2rem;
-        color: #2E7D32;
-    }
-    .scheme-banner {
-        background: #FFFFFF;
-        border: 2px solid rgba(13, 99, 27, 0.18);
-        color: white;
-        color: #0D631B;
-        border-radius: 1.5rem;
-        padding: 1.25rem 1.5rem;
-        font-size: 1.6rem;
-        font-weight: 800;
-        margin-bottom: 1.25rem;
-        text-align: left;
-        box-shadow: 0 10px 30px rgba(46, 125, 50, 0.08);
-    }
-    .verified-badge {
-        float: right;
-        background: #FABD00;
-        color: #5B4300;
-        border-radius: 999px;
-        padding: 0.3rem 0.6rem;
-        font-size: 0.72rem;
-        font-weight: 800;
-    }
-    .panel-title {
-        color: #0D631B;
-        font-family: Montserrat, Inter, sans-serif;
-        font-size: 1.35rem;
-        border: 0;
-        text-align: center;
-    }
-    div[data-testid="stCustomComponentV1"] {
-        position: fixed !important;
-        z-index: 1000 !important;
-        left: 50% !important;
-        bottom: 0.25rem !important;
-        transform: translateX(-50%) !important;
-        width: 240px !important;
-        max-width: 240px !important;
-        height: 235px !important;
-        min-height: 235px !important;
-        margin: 0 !important;
-        padding-top: 0.5rem;
-        border-radius: 2rem 2rem 0 0;
-        background: linear-gradient(to top, rgba(252,249,248,1) 44%, rgba(252,249,248,0));
-    }
-    .documents-box {
-        background: rgba(255, 255, 255, 0.94);
-        border: 1px solid rgba(191, 202, 186, 0.65);
-        border-radius: 1.5rem;
-        box-shadow: 0 10px 30px rgba(46, 125, 50, 0.08);
-    }
-    .missing-banner {
-        background: #FFF3E0;
-        border-left: 8px solid #EF6C00;
-        border-radius: 12px;
-        padding: 1rem 1.25rem;
-        font-size: 1.25rem;
-        font-weight: 700;
-        color: #E65100;
-        margin-top: 1rem;
-    }
-    div[data-testid="stSelectbox"] label,
-    div[data-testid="column"] label {
-        font-size: 1.1rem !important;
-        font-weight: 600 !important;
-    }
-    #MainMenu, footer { visibility: hidden; }
-</style>
+    <script src="https://cdn.tailwindcss.com?plugins=forms,container-queries"></script>
+    <link href="https://fonts.googleapis.com/css2?family=Montserrat:wght@400;600;700&family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
+    <link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&display=swap" rel="stylesheet">
+    <script id="tailwind-config">
+        tailwind.config = {
+            darkMode: "class",
+            theme: {
+                extend: {
+                    colors: {
+                        "on-surface-variant": "#40493d",
+                        "on-secondary-fixed-variant": "#07521d",
+                        "on-primary-container": "#cbffc2",
+                        "tertiary-container": "#8c6800",
+                        "surface-container-low": "#f6f3f2",
+                        "primary": "#0d631b",
+                        "primary-fixed-dim": "#88d982",
+                        "inverse-primary": "#88d982",
+                        "tertiary-fixed-dim": "#fabd00",
+                        "on-error": "#ffffff",
+                        "on-primary": "#ffffff",
+                        "secondary": "#286b33",
+                        "on-primary-fixed": "#002204",
+                        "secondary-container": "#abf4ac",
+                        "on-surface": "#1b1b1b",
+                        "on-tertiary-container": "#ffefd6",
+                        "inverse-on-surface": "#f3f0ef",
+                        "surface-container-highest": "#e5e2e1",
+                        "on-secondary-container": "#2e7238",
+                        "on-tertiary": "#ffffff",
+                        "on-background": "#1b1b1b",
+                        "inverse-surface": "#313030",
+                        "surface-variant": "#e5e2e1",
+                        "outline-variant": "#bfcaba",
+                        "primary-fixed": "#a3f69c",
+                        "error-container": "#ffdad6",
+                        "error": "#ba1a1a",
+                        "on-primary-fixed-variant": "#005312",
+                        "on-error-container": "#93000a",
+                        "on-tertiary-fixed": "#261a00",
+                        "surface-dim": "#dcd9d9",
+                        "secondary-fixed-dim": "#90d792",
+                        "on-secondary-fixed": "#002107",
+                        "surface-container-lowest": "#ffffff",
+                        "tertiary-fixed": "#ffdf9e",
+                        "on-tertiary-fixed-variant": "#5b4300",
+                        "surface-bright": "#fcf9f8",
+                        "outline": "#707a6c",
+                        "tertiary": "#6d5100",
+                        "on-secondary": "#ffffff",
+                        "surface-container-high": "#eae7e7",
+                        "surface-tint": "#1b6d24",
+                        "surface": "#fcf9f8",
+                        "secondary-fixed": "#abf4ac",
+                        "background": "#fcf9f8",
+                        "primary-container": "#2e7d32",
+                        "surface-container": "#f0eded"
+                    },
+                    borderRadius: {
+                        "DEFAULT": "0.25rem",
+                        "lg": "0.5rem",
+                        "xl": "0.75rem",
+                        "full": "9999px"
+                    },
+                    spacing: {
+                        "section-gap": "40px",
+                        "touch-target-min": "56px",
+                        "base": "8px",
+                        "container-max": "1200px",
+                        "card-padding": "24px"
+                    },
+                    fontFamily: {
+                        "button-text": ["Montserrat"],
+                        "body-md": ["Inter"],
+                        "label-lg": ["Inter"],
+                        "display-lg": ["Montserrat"],
+                        "body-lg": ["Inter"],
+                        "headline-lg-mobile": ["Montserrat"],
+                        "headline-lg": ["Montserrat"]
+                    },
+                    fontSize: {
+                        "button-text": ["20px", { "lineHeight": "24px", "fontWeight": "700" }],
+                        "body-md": ["18px", { "lineHeight": "28px", "fontWeight": "400" }],
+                        "label-lg": ["16px", { "lineHeight": "24px", "letterSpacing": "0.05em", "fontWeight": "600" }],
+                        "display-lg": ["48px", { "lineHeight": "56px", "letterSpacing": "-0.02em", "fontWeight": "700" }],
+                        "body-lg": ["20px", { "lineHeight": "32px", "fontWeight": "400" }],
+                        "headline-lg-mobile": ["28px", { "lineHeight": "36px", "fontWeight": "600" }],
+                        "headline-lg": ["32px", { "lineHeight": "40px", "fontWeight": "600" }]
+                    }
+                }
+            }
+        }
+    </script>
+    <style>
+        .material-symbols-outlined {
+            font-variation-settings: 'FILL' 1;
+        }
+        .glass-panel {
+            background: rgba(255, 255, 255, 0.9);
+            backdrop-filter: blur(20px);
+            -webkit-backdrop-filter: blur(20px);
+            box-shadow: 0px 10px 30px rgba(46, 125, 50, 0.08);
+        }
+        .glass-panel-heavy {
+            background: rgba(255, 255, 255, 0.95);
+            backdrop-filter: blur(24px);
+            -webkit-backdrop-filter: blur(24px);
+            box-shadow: 0px 15px 40px rgba(46, 125, 50, 0.12);
+        }
+        .pulse-amber {
+            animation: pulse-ring 2s cubic-bezier(0.215, 0.61, 0.355, 1) infinite;
+        }
+        @keyframes pulse-ring {
+            0% { transform: scale(0.8); box-shadow: 0 0 0 0 rgba(250, 189, 0, 0.7); }
+            70% { transform: scale(1); box-shadow: 0 0 0 20px rgba(250, 189, 0, 0); }
+            100% { transform: scale(0.8); box-shadow: 0 0 0 0 rgba(250, 189, 0, 0); }
+        }
+        .fade-in-up {
+            animation: fadeInUp 0.6s ease-out forwards;
+            opacity: 0;
+            transform: translateY(20px);
+        }
+        @keyframes fadeInUp {
+            to { opacity: 1; transform: translateY(0); }
+        }
+        .chat-bubble-delay-1 { animation-delay: 0.2s; }
+        .chat-bubble-delay-2 { animation-delay: 0.6s; }
+        .chat-bubble-delay-3 { animation-delay: 1.0s; }
+        
+        #MainMenu, footer { visibility: hidden; }
+        .stApp {
+            background: #FCF9F8;
+            color: #1B1B1B;
+        }
+        div[data-testid="stCustomComponentV1"] {
+            position: fixed !important;
+            z-index: 1000 !important;
+            left: 50% !important;
+            bottom: 0.25rem !important;
+            transform: translateX(-50%) !important;
+            width: 320px !important;
+            max-width: 320px !important;
+            height: 320px !important;
+            min-height: 320px !important;
+            margin: 0 !important;
+            padding: 0 !important;
+            background: transparent !important;
+            border: none !important;
+        }
+        .block-container {
+            max-width: 800px !important;
+            padding-bottom: 24rem !important;
+        }
+    </style>
 """,
     unsafe_allow_html=True,
 )
@@ -777,6 +533,7 @@ def automatic_recording() -> bytes | None:
 
 
 def process_recording(audio_bytes: bytes) -> bool:
+    st.session_state.error_message = None
     conversation: ConversationState = st.session_state.conversation
     conversation.set_state("PROCESSING")
     work = st.status("Working on your request…", expanded=True)
@@ -786,18 +543,18 @@ def process_recording(audio_bytes: bytes) -> bool:
         try:
             transcript, detected_language = transcribe(audio_bytes, get_secret("SARVAM_API_KEY"))
         except Exception as exc:
+            st.session_state.error_message = f"Speech recognition failed: {exc}"
             st.session_state.card_status = "error"
             conversation.set_state("LISTENING")
             work.update(label="Speech recognition failed", state="error", expanded=True)
-            st.error(f"Speech recognition failed: {exc}")
             return False
         st.session_state.transcript = transcript
 
     if not transcript:
+        st.session_state.error_message = "I could not hear the recording. Please speak closer to the microphone and try again."
         st.session_state.card_status = "error"
         conversation.set_state("LISTENING")
         work.update(label="I could not hear the recording", state="error", expanded=True)
-        st.error("I could not hear the recording. Please speak closer to the microphone and try again.")
         return False
 
     conversation.transcript = transcript
@@ -816,10 +573,10 @@ def process_recording(audio_bytes: bytes) -> bool:
                 get_secret("FIRECRAWL_API_KEY"),
             )
         except Exception as exc:
+            st.session_state.error_message = f"Assistant request failed: {exc}"
             st.session_state.card_status = "error"
             conversation.set_state("LISTENING")
             work.update(label="The assistant could not process the request", state="error", expanded=True)
-            st.error(f"Assistant request failed: {exc}")
             return False
     conversation.result = result
     if result.goodbye_detected:
@@ -865,12 +622,12 @@ def process_recording(audio_bytes: bytes) -> bool:
             st.session_state.tts_token += 1
         except Exception as exc:
             st.session_state.tts_audio_bytes = None
+            st.session_state.error_message = f"TTS failed: {exc}"
             conversation.set_state("LISTENING")
             work.update(label="Reply text is ready, but voice playback failed", state="error", expanded=True)
-            st.error(f"TTS failed: {exc}")
             return False
 
-    conversation.set_state("DISPLAY_RESULTS" if result.conversation_complete else "LISTENING")
+    conversation.set_state("COMPLETED" if result.conversation_complete else "LISTENING")
     work.update(label="Reply ready — see the conversation below", state="complete", expanded=False)
     return True
 
@@ -998,65 +755,201 @@ if missing:
     st.stop()
 
 # ---------------------------------------------------------------------------
-# Conversation-first kiosk home screen
+# Conversation-first kiosk home screen (Tailwind Premium Design)
 # ---------------------------------------------------------------------------
 
 conversation: ConversationState = st.session_state.conversation
-state_labels = {
-    "IDLE": "🎙️ Tap once to begin",
-    "LISTENING": "🎤 Listening",
-    "PROCESSING": "📝 Understanding",
-    "THINKING": "🤖 Thinking",
-    "SPEAKING": "🔊 Speaking",
-    "SEARCHING": "🔍 Searching official schemes",
-    "DISPLAY_RESULTS": "📄 Preparing response",
-    "COMPLETED": "✅ Conversation complete",
-}
+
+# Render Header Section
 st.markdown(
-    f'<div class="mic-help">{state_labels.get(conversation.state, conversation.state)}</div>',
+    """
+    <header class="text-center mb-12 fade-in-up">
+        <h1 class="font-display-lg text-[48px] font-bold text-[#0d631b] mb-4">Grameen Seva AI Hub</h1>
+        <p class="font-body-lg text-[20px] text-[#1b1b1b] max-w-2xl mx-auto">
+            I can help you with government schemes and agricultural advice.
+        </p>
+    </header>
+    """,
     unsafe_allow_html=True,
 )
 
-mic_col_left, mic_col_center, mic_col_right = st.columns([1, 2, 1])
-with mic_col_center:
-    audio = autonomous_recorder(
-        active=conversation.state != "COMPLETED",
-        auto_start=conversation.listening_started and conversation.state == "LISTENING",
-        tts_audio=(st.session_state.tts_audio_bytes if conversation.state != "COMPLETED" else None),
-        tts_token=st.session_state.tts_token,
-        resume_after_tts=not conversation.result.conversation_complete,
-    )
-
-if not conversation.turns:
+# Render Language Badge if detected
+detected_code = (conversation.language_code or "").lower()
+language_names = {
+    "hi": "हिन्दी",
+    "te": "తెలుగు",
+    "ta": "தமிழ்",
+    "kn": "ಕನ್ನಡ",
+    "mr": "मराठी",
+    "bn": "বাংলা",
+    "gu": "ગુજરાતી",
+    "pa": "ਪੰਜਾਬੀ",
+}
+detected_name = next((name for code, name in language_names.items() if detected_code.startswith(code)), "")
+if detected_name:
     st.markdown(
-        '<div class="status-message">🎙️ Tap once and speak. I will listen, understand, and reply automatically.</div>',
+        f"""
+        <div class="flex justify-center mb-8 fade-in-up">
+            <div class="bg-[#abf4ac] text-[#2e7238] px-4 py-1.5 rounded-full font-semibold text-[16px] flex items-center gap-2">
+                <span class="material-symbols-outlined text-[18px]">language</span>
+                Language detected: {html.escape(detected_name)}
+            </div>
+        </div>
+        """,
         unsafe_allow_html=True,
     )
-if conversation.turns:
-    st.markdown('<div class="chat-shell">', unsafe_allow_html=True)
-    for turn in reversed(conversation.turns):
-        role = "farmer" if turn["role"] == "farmer" else "assistant"
-        label = "You" if role == "farmer" else "Grameen Seva AI"
-        text = html.escape(turn["text"])
-        st.markdown(
-            f'<div class="chat-bubble {role}"><span class="chat-label">{label}</span>{text}</div>',
-            unsafe_allow_html=True,
-        )
-    st.markdown('</div>', unsafe_allow_html=True)
 
-if conversation.result.conversation_complete:
-    st.markdown('<div class="panel-title">📊 Your official scheme result</div>', unsafe_allow_html=True)
-    render_metrics()
-    if st.session_state.tts_audio_bytes:
-        st.markdown("##### 🔊 Listen to the answer")
-        if st.button("🔊 Replay answer", use_container_width=True):
-            st.session_state.replay_counter += 1
-            st.audio(
-                st.session_state.tts_audio_bytes,
-                format="audio/wav",
-                autoplay=True,
-                key=f"replay_{st.session_state.replay_counter}",
-            )
+# Render Chat History
+chat_html = ""
+for i, turn in enumerate(conversation.turns):
+    role = "farmer" if turn["role"] == "farmer" else "assistant"
+    text = html.escape(turn["text"])
+    delay_class = f"chat-bubble-delay-{(i % 3) + 1}"
+    if role == "farmer":
+        chat_html += f"""
+        <div class="flex justify-end w-full fade-in-up {delay_class} mb-4">
+            <div class="bg-[#81C784] text-white rounded-3xl rounded-tr-sm px-6 py-4 max-w-[80%] shadow-md">
+                <p class="font-body-lg text-[20px]">{text}</p>
+            </div>
+        </div>
+        """
+    else:
+        chat_html += f"""
+        <div class="flex justify-start w-full fade-in-up {delay_class} mb-4">
+            <div class="glass-panel-heavy text-[#1b1b1b] rounded-3xl rounded-tl-sm px-6 py-4 max-w-[85%] shadow-md border border-[#bfcaba]/30">
+                <div class="flex items-center gap-2 mb-2 text-[#0d631b] font-semibold text-[16px]">
+                    <span class="material-symbols-outlined text-[18px]">smart_toy</span>
+                    <span class="">Grameen AI</span>
+                </div>
+                <p class="font-body-lg text-[20px]">{text}</p>
+            </div>
+        </div>
+        """
+
+# Render Result Card if completed
+result_html = ""
+result = conversation.result
+if result.conversation_complete:
+    benefit_val = f"{format_inr(result.max_claim_inr)} / Year" if result.max_claim_inr > 0 else "—"
+    subsidy_val = f"{result.subsidy_percent}%" if result.subsidy_percent > 0 else "—"
+    equipment_val = result.equipment_or_input or "—"
+    scheme_val = result.scheme_name or "—"
+    
+    docs_list = "".join(f"<li class='mb-1'>{html.escape(d)}</li>" for d in result.required_documents)
+    docs_section = ""
+    if docs_list:
+        docs_section = f"""
+        <div class="flex items-start gap-3">
+            <span class="material-symbols-outlined text-[#8c6800] mt-1">description</span>
+            <div>
+                <h4 class="font-semibold text-[16px] text-[#1b1b1b]">Required Documents</h4>
+                <ul class="list-disc pl-5 font-normal text-[18px] text-[#40493d]">{docs_list}</ul>
+            </div>
+        </div>
+        """
+        
+    eligibility_section = ""
+    if conversation.eligibility_status:
+        eligibility_section = f"""
+        <div class="flex items-start gap-3">
+            <span class="material-symbols-outlined text-[#0d631b] mt-1">check_circle</span>
+            <div>
+                <h4 class="font-semibold text-[16px] text-[#1b1b1b]">Eligibility</h4>
+                <p class="font-normal text-[18px] text-[#40493d]">{html.escape(conversation.eligibility_status.title())}</p>
+            </div>
+        </div>
+        """
+        
+    source_url = result.source_url or conversation.researched_url
+    source_section = ""
+    if source_url:
+        safe_url = html.escape(source_url, quote=True)
+        source_section = f"""
+        <div class="mt-6">
+            <a href="{safe_url}" target="_blank" class="w-full bg-[#0d631b] hover:bg-[#0d631b]/90 text-white font-bold text-[20px] py-4 rounded-xl shadow-md transition-transform active:scale-95 flex items-center justify-center gap-2" style="text-decoration: none; color: white;">
+                Open Official Source
+                <span class="material-symbols-outlined">arrow_forward</span>
+            </a>
+        </div>
+        """
+        
+    result_html = f"""
+    <div class="flex justify-start w-full fade-in-up chat-bubble-delay-3 mt-6">
+        <div class="glass-panel-heavy rounded-3xl p-6 w-full max-w-[90%] shadow-lg border-2 border-[#0d631b]/20 relative overflow-hidden">
+            <div class="absolute top-0 right-0 bg-[#fabd00] text-[#5b4300] px-4 py-1 rounded-bl-xl font-semibold text-[16px] flex items-center gap-1">
+                <span class="material-symbols-outlined text-[16px]">verified</span>
+                Verified Source
+            </div>
+            <h3 class="font-bold text-[28px] text-[#0d631b] mb-4 pr-32">{html.escape(scheme_val)}</h3>
+            <div class="grid grid-cols-1 md:grid-cols-2 gap-4 mb-6">
+                <div class="bg-[#f0eded] rounded-xl p-4 border border-[#bfcaba]/20">
+                    <span class="block font-semibold text-[16px] text-[#40493d] mb-1">Financial Benefit</span>
+                    <span class="font-bold text-[28px] text-[#0d631b]">{benefit_val}</span>
+                </div>
+                <div class="bg-[#f0eded] rounded-xl p-4 border border-[#bfcaba]/20">
+                    <span class="block font-semibold text-[16px] text-[#40493d] mb-1">Subsidy / Equipment</span>
+                    <span class="font-bold text-[28px] text-[#0d631b]">{subsidy_val} ({html.escape(equipment_val)})</span>
+                </div>
+            </div>
+            <div class="space-y-3">
+                {eligibility_section}
+                {docs_section}
+            </div>
+            {source_section}
+        </div>
+    </div>
+    """
+
+# Render all conversation inside the Chat Area container
+if chat_html or result_html:
+    st.markdown(
+        f"""
+        <div class="w-full flex flex-col space-y-6 mb-16 px-4">
+            {chat_html}
+            {result_html}
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+elif not conversation.turns:
+    # Render empty state
+    st.markdown(
+        """
+        <div class="glass-panel rounded-3xl p-12 text-center max-w-lg mx-auto mb-12 fade-in-up">
+            <p class="font-semibold text-[32px] text-[#0d631b]">Tap the microphone and speak in Hindi, Telugu, or Tamil.</p>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+# Render Persistent Error in Parent UI if exists
+if st.session_state.error_message:
+    st.error(st.session_state.error_message)
+
+# Render Microphone Component
+audio = autonomous_recorder(
+    active=conversation.state != "COMPLETED",
+    auto_start=False,
+    tts_audio=None,
+    tts_token=0,
+    resume_after_tts=False,
+)
+
+# Autoplay TTS voice response if it is new and conversation is active
+if st.session_state.tts_audio_bytes and conversation.state != "COMPLETED":
+    if st.session_state.get("last_played_tts_token", -1) != st.session_state.tts_token:
+        st.audio(st.session_state.tts_audio_bytes, format="audio/wav", autoplay=True)
+        st.session_state.last_played_tts_token = st.session_state.tts_token
+
+# Autoplay TTS voice response on first completion
+if conversation.result.conversation_complete and st.session_state.tts_audio_bytes:
+    if st.session_state.get("last_played_tts_token", -1) != st.session_state.tts_token:
+        st.audio(st.session_state.tts_audio_bytes, format="audio/wav", autoplay=True)
+        st.session_state.last_played_tts_token = st.session_state.tts_token
+    # Show native streamlit audio controls for replaying the answer
+    st.write("")
+    st.write("")
+    st.audio(st.session_state.tts_audio_bytes, format="audio/wav", autoplay=False)
 
 if isinstance(audio, dict):
     event = audio.get("event")
@@ -1073,10 +966,11 @@ if isinstance(audio, dict):
         conversation.set_state("COMPLETED")
         st.rerun()
     if event == "error":
-        st.error("Microphone permission is required to start the conversation.")
+        # Capture error and persist it
+        st.session_state.error_message = audio.get("message") or "Microphone permission is required."
         conversation.set_state("IDLE")
         conversation.listening_started = False
-        st.stop()
+        st.rerun()
     audio_payload = audio.get("audio", "")
     audio_bytes = base64.b64decode(audio_payload) if audio_payload else None
 elif audio is not None:
