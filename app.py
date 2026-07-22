@@ -21,6 +21,7 @@ from models.conversation import ConversationState
 from services.recorder import autonomous_recorder
 from services.sarvam import text_to_speech, transcribe
 
+
 # ---------------------------------------------------------------------------
 # Page config — wide desktop / kiosk layout
 # ---------------------------------------------------------------------------
