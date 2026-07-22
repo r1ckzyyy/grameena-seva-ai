@@ -59,15 +59,37 @@ st.markdown(
     """
 <style>
     .stApp {
-        background: linear-gradient(135deg, #E8F5E9 0%, #FAFAFA 50%, #FFFFFF 100%);
+        background: #FCF9F8;
+        color: #1B1B1B;
+        font-family: Inter, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    }
+    .stApp::after {
+        content: "";
+        position: fixed;
+        z-index: 998;
+        left: 0;
+        right: 0;
+        bottom: 0;
+        height: 250px;
+        pointer-events: none;
+        background: linear-gradient(to top, #FCF9F8 25%, rgba(252,249,248,0.92) 58%, rgba(252,249,248,0));
+    }
+    section[data-testid="stMain"] > div {
+        max-width: 800px;
+        margin: 0 auto;
+    }
+    .block-container {
+        max-width: 800px !important;
+        padding: 2.5rem 1.5rem 19rem !important;
     }
     .main-header {
         text-align: center;
         color: #0D631B;
-        font-size: 2.6rem;
+        font-family: Montserrat, Inter, sans-serif;
+        font-size: 2rem;
         font-weight: 900;
         letter-spacing: 0.5px;
-        margin: 1rem 0 0.25rem 0;
+        margin: 0.25rem 0 0.35rem 0;
         line-height: 1.15;
     }
     .brand-mark {
@@ -87,11 +109,13 @@ st.markdown(
         color: #2E7D32;
         font-size: 1.35rem;
         font-weight: 600;
-        margin-bottom: 1.5rem;
+        margin-bottom: 2.25rem;
+        font-family: Inter, sans-serif;
+        font-size: 1.05rem;
     }
     .language-badge {
         width: fit-content;
-        margin: 0 auto 0.8rem;
+        margin: 0 auto 0.6rem;
         padding: 0.35rem 0.8rem;
         border-radius: 999px;
         background: #E8F5E9;
@@ -125,9 +149,19 @@ st.markdown(
     }
     .mic-help {
         text-align: center;
-        color: #546E7A;
-        font-size: 1.15rem;
-        margin: 0.75rem 0 1.5rem;
+        position: fixed;
+        z-index: 1001;
+        left: 50%;
+        bottom: 14rem;
+        transform: translateX(-50%);
+        color: #5B4300;
+        background: #FABD00;
+        border-radius: 999px;
+        padding: 0.45rem 1rem;
+        font-size: 0.88rem;
+        font-weight: 800;
+        box-shadow: 0 8px 20px rgba(250, 189, 0, 0.22);
+        white-space: nowrap;
     }
     .mic-stage {
         position: relative;
@@ -250,38 +284,41 @@ st.markdown(
         margin-bottom: 0.5rem;
     }
     .chat-shell {
-        max-width: 900px;
-        max-height: 42vh;
+        max-width: 760px;
+        max-height: 48vh;
         overflow-y: auto;
         display: flex;
         flex-direction: column-reverse;
         gap: 0.2rem;
-        margin: 1.5rem auto 0;
+        margin: 0 auto 2rem;
         padding: 0.25rem 0.5rem;
         scroll-behavior: smooth;
     }
     .chat-bubble {
         padding: 1rem 1.25rem;
-        border-radius: 18px;
-        margin: 0.75rem 0;
-        font-size: 1.3rem;
-        line-height: 1.5;
+        border-radius: 1.5rem;
+        margin: 0.45rem 0;
+        font-size: 1.05rem;
+        line-height: 1.55;
         white-space: pre-wrap;
         box-shadow: 0 8px 22px rgba(46, 125, 50, 0.08);
         animation: chat-in 0.35s ease-out both;
     }
     @keyframes chat-in { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: translateY(0); } }
     .chat-bubble.farmer {
-        margin-left: 12%;
-        background: #E3F2FD;
-        border: 2px solid #90CAF9;
-        color: #0D47A1;
+        margin-left: 18%;
+        background: #81C784;
+        border: 0;
+        color: #FFFFFF;
+        border-top-right-radius: 0.35rem;
     }
     .chat-bubble.assistant {
-        margin-right: 12%;
-        background: #E8F5E9;
-        border: 2px solid #A5D6A7;
-        color: #1B5E20;
+        margin-right: 10%;
+        background: rgba(255, 255, 255, 0.94);
+        border: 1px solid rgba(191, 202, 186, 0.65);
+        color: #1B1B1B;
+        border-top-left-radius: 0.35rem;
+        box-shadow: 0 10px 30px rgba(46, 125, 50, 0.08);
     }
     .chat-label {
         display: block;
@@ -315,6 +352,11 @@ st.markdown(
         grid-template-columns: repeat(2, 1fr);
         gap: 1.25rem;
         margin: 1.25rem 0;
+        padding: 1.25rem;
+        background: rgba(255, 255, 255, 0.94);
+        border: 1px solid rgba(191, 202, 186, 0.65);
+        border-radius: 1.5rem;
+        box-shadow: 0 15px 40px rgba(46, 125, 50, 0.12);
     }
     .metric-card {
         background: #FFFFFF;
@@ -348,14 +390,54 @@ st.markdown(
         color: #2E7D32;
     }
     .scheme-banner {
-        background: linear-gradient(90deg, #2E7D32, #43A047);
+        background: #FFFFFF;
+        border: 2px solid rgba(13, 99, 27, 0.18);
         color: white;
-        border-radius: 14px;
+        color: #0D631B;
+        border-radius: 1.5rem;
         padding: 1.25rem 1.5rem;
         font-size: 1.6rem;
         font-weight: 800;
         margin-bottom: 1.25rem;
+        text-align: left;
+        box-shadow: 0 10px 30px rgba(46, 125, 50, 0.08);
+    }
+    .verified-badge {
+        float: right;
+        background: #FABD00;
+        color: #5B4300;
+        border-radius: 999px;
+        padding: 0.3rem 0.6rem;
+        font-size: 0.72rem;
+        font-weight: 800;
+    }
+    .panel-title {
+        color: #0D631B;
+        font-family: Montserrat, Inter, sans-serif;
+        font-size: 1.35rem;
+        border: 0;
         text-align: center;
+    }
+    div[data-testid="stCustomComponentV1"] {
+        position: fixed !important;
+        z-index: 1000 !important;
+        left: 50% !important;
+        bottom: 0.25rem !important;
+        transform: translateX(-50%) !important;
+        width: 240px !important;
+        max-width: 240px !important;
+        height: 235px !important;
+        min-height: 235px !important;
+        margin: 0 !important;
+        padding-top: 0.5rem;
+        border-radius: 2rem 2rem 0 0;
+        background: linear-gradient(to top, rgba(252,249,248,1) 44%, rgba(252,249,248,0));
+    }
+    .documents-box {
+        background: rgba(255, 255, 255, 0.94);
+        border: 1px solid rgba(191, 202, 186, 0.65);
+        border-radius: 1.5rem;
+        box-shadow: 0 10px 30px rgba(46, 125, 50, 0.08);
     }
     .missing-banner {
         background: #FFF3E0;
@@ -802,7 +884,7 @@ def render_metrics() -> None:
     # Unknown values are omitted instead of displayed as empty dashboard data.
     if st.session_state.scheme_name:
         st.markdown(
-            f'<div class="scheme-banner">{html.escape(st.session_state.scheme_name)}</div>',
+            f'<div class="scheme-banner"><span class="verified-badge">✓ Verified Source</span>{html.escape(st.session_state.scheme_name)}</div>',
             unsafe_allow_html=True,
         )
     cards = []
@@ -930,7 +1012,6 @@ state_labels = {
     "DISPLAY_RESULTS": "📄 Preparing response",
     "COMPLETED": "✅ Conversation complete",
 }
-st.markdown('<div class="mic-heading">Grameen Seva AI Hub</div>', unsafe_allow_html=True)
 st.markdown(
     f'<div class="mic-help">{state_labels.get(conversation.state, conversation.state)}</div>',
     unsafe_allow_html=True,
