@@ -1,24 +1,39 @@
-import streamlit as st
-import time
+import base64
 import logging
-from google import genai
-from google.genai.errors import APIError
+import time
+import streamlit as st
 
-# Configure logging
+# Setup Logging
 logging.basicConfig(level=logging.INFO)
 
 # ---------------------------------------------------------
-# GEMINI CONFIGURATION (google-genai SDK v1.25+)
+# GEMINI SDK DYNAMIC COMPATIBILITY
+# Handles both 'google-genai' and 'google-generativeai'
 # ---------------------------------------------------------
 GEMINI_KEY = st.secrets.get("gemini_api_key") or st.secrets.get("GEMINI_API_KEY")
-ai_client = None
+
+try:
+    from google import genai
+    from google.genai.errors import APIError
+    SDK_MODE = "google-genai"
+except ImportError:
+    import google.generativeai as genai
+    APIError = Exception
+    SDK_MODE = "google-generativeai"
+
 if GEMINI_KEY:
     try:
-        ai_client = genai.Client(api_key=GEMINI_KEY)
+        if SDK_MODE == "google-genai":
+            ai_client = genai.Client(api_key=GEMINI_KEY)
+        else:
+            genai.configure(api_key=GEMINI_KEY)
+            ai_client = True
     except Exception as e:
-        st.error(f"Failed to initialize Gemini Client: {e}")
+        logging.error(f"Gemini initialization error: {e}")
+        ai_client = None
 else:
-    st.error("Configuration Error: Gemini API Key missing from Streamlit secrets.")
+    ai_client = None
+    st.error("Configuration Error: GEMINI_API_KEY is missing from Streamlit secrets.")
 
 # ---------------------------------------------------------
 # PROJECT IMPORTS
@@ -30,7 +45,7 @@ from services.sarvam import speech_to_text, text_to_speech
 from services.research import tavily_search, firecrawl_scrape
 
 # ---------------------------------------------------------
-# PAGE CONFIGURATION & STYLING
+# PAGE CONFIGURATION & KIOSK STYLING
 # ---------------------------------------------------------
 st.set_page_config(
     page_title="Grameen Seva AI Hub",
@@ -39,10 +54,9 @@ st.set_page_config(
     initial_sidebar_state="collapsed"
 )
 
-# Custom CSS for Kiosk UI
 st.markdown("""
     <style>
-    /* Hide default Streamlit Chrome and raw Audio elements */
+    /* Hide Streamlit navbar/footer and browser audio player element */
     #MainMenu, footer, header { visibility: hidden !important; }
     audio { display: none !important; visibility: hidden !important; height: 0px !important; }
     
@@ -142,52 +156,89 @@ def init_state():
         st.session_state.tts_audio_b64 = None
 
 # ---------------------------------------------------------
-# GOV SEARCH PIPELINE WITH GEMINI SUMMARIZATION
+# HELPER UTILITIES
+# ---------------------------------------------------------
+def generate_gemini_summary(prompt: str) -> str:
+    """Executes Gemini generation with retry logic supporting both SDKs."""
+    if not ai_client:
+        return ""
+        
+    for attempt in range(3):
+        try:
+            if SDK_MODE == "google-genai":
+                res = ai_client.models.generate_content(
+                    model="gemini-1.5-flash",
+                    contents=prompt
+                )
+                if res and res.text:
+                    return res.text
+            else:
+                model = genai.GenerativeModel("gemini-1.5-flash")
+                res = model.generate_content(prompt)
+                if res and res.text:
+                    return res.text
+        except Exception as e:
+            logging.warning(f"Gemini API attempt {attempt + 1} failed: {e}")
+            time.sleep(1.5 * (attempt + 1))
+    return ""
+
+def format_audio_b64(raw_tts) -> str:
+    """Ensures TTS output is formatted as a valid base64 string."""
+    if not raw_tts:
+        return ""
+    if isinstance(raw_tts, bytes):
+        return base64.b64encode(raw_tts).decode("utf-8")
+    return str(raw_tts)
+
+# ---------------------------------------------------------
+# SEARCH PIPELINE
 # ---------------------------------------------------------
 def run_gov_search_pipeline(state: ConversationState) -> str:
-    """Executes Tavily search restricted to official government domains, scrapes via Firecrawl, and summarizes."""
-    district = state.district or ""
-    st_name = state.state or ""
-    category = state.farmer_category or ""
-    equipment = state.equipment_need or ""
+    """Executes Tavily search strictly on gov domains, scrapes via Firecrawl, and summarizes via Gemini."""
+    district = getattr(state, "district", "") or ""
+    st_name = getattr(state, "state", "") or ""
+    category = getattr(state, "farmer_category", "") or ""
+    equipment = getattr(state, "equipment_need", "") or ""
+    lang = getattr(state, "language", None) or "hi-IN"
     
     query = f"government scheme subsidy {equipment} {category} {district} {st_name} site:myscheme.gov.in OR site:gov.in"
     
     try:
         search_results = tavily_search(query)
         if search_results and "results" in search_results and search_results["results"]:
-            official_url = search_results["results"][0].get("url")
-            if official_url and ("gov.in" in official_url):
+            official_url = None
+            for item in search_results["results"]:
+                url = item.get("url", "")
+                if "gov.in" in url:
+                    official_url = url
+                    break
+                    
+            if official_url:
                 page_text = firecrawl_scrape(official_url)
-                if page_text and ai_client:
+                if page_text:
                     prompt = f"""
-                    You are assisting an Indian farmer. Summarize the government subsidy scheme details clearly and concisely.
-                    Rely strictly on the provided web content. Do NOT invent eligibility or amounts.
-                    MUST reply entirely in the farmer's detected language (Language code: {state.language}).
+                    You are an agricultural advisor assisting an Indian farmer at a government kiosk.
+                    Summarize the verified government subsidy/scheme details clearly and concisely.
+                    Rely strictly on the provided web content. Do NOT invent eligibility rules or subsidy amounts.
+                    MUST reply entirely in the farmer's detected language (Language code: {lang}).
                     
                     Scraped Web Content:
                     {page_text[:4000]}
                     """
-                    for attempt in range(3):
-                        try:
-                            res = ai_client.models.generate_content(
-                                model="gemini-1.5-flash",
-                                contents=prompt
-                            )
-                            if res and res.text:
-                                return res.text
-                        except APIError as e:
-                            logging.warning(f"Gemini API attempt {attempt+1} retry: {e}")
-                            time.sleep(1.5 * (attempt + 1))
+                    summary = generate_gemini_summary(prompt)
+                    if summary:
+                        return summary
     except Exception as e:
-        logging.error(f"Search pipeline error: {e}")
+        logging.error(f"Search pipeline execution error: {e}")
         
     fallback_map = {
         "te-IN": "మీ పరిధిలోని ప్రభుత్వ సబ్సిడీ వివరాల సమాచారం కోసం అధికారిక వెబ్‌సైట్ myscheme.gov.in చూడవచ్చు.",
         "hi-IN": "आपकी सरकारी सब्सिडी योजना की जानकारी के लिए myscheme.gov.in पर देखें।",
-        "ta-IN": "உங்கள் அரசு மானிய திட்ட தகவல்களுக்கு myscheme.gov.in வலைத்தளத்தை பார்க்கவும்."
+        "ta-IN": "உங்கள் அரசு மானிய திட்ட தகவல்களுக்கு myscheme.gov.in வலைத்தளத்தை பார்க்கவும்.",
+        "kn-IN": "ನಿಮ್ಮ ಅರ್ಹತೆಗೆ ಸೂಕ್ತವಾದ ಸರ್ಕಾರಿ ಯೋಜನೆಗಳ ಮಾಹಿತಿಗಾಗಿ myscheme.gov.in ಗೆ ಭೇಟಿ ನೀಡಿ.",
+        "ml-IN": "നിങ്ങളുടെ യോഗ്യതയ്ക്കനുസരിച്ചുള്ള സർക്കാർ പദ്ധതികളുടെ വിവരങ്ങൾക്ക് myscheme.gov.in സന്ദർശിക്കുക."
     }
-    return fallback_map.get(state.language, "For official government scheme information, please visit myscheme.gov.in.")
+    return fallback_map.get(lang, "For official government scheme details, please visit myscheme.gov.in.")
 
 # ---------------------------------------------------------
 # MAIN KIOSK APPLICATION
@@ -203,7 +254,7 @@ def main():
         </div>
     """, unsafe_allow_html=True)
     
-    # 2. Dynamic Language Indicator
+    # 2. Language Indicator
     if st.session_state.state.language:
         lang_display = {
             "te-IN": "తెలుగు (Telugu)",
@@ -211,7 +262,7 @@ def main():
             "ta-IN": "தமிழ் (Tamil)",
             "kn-IN": "ಕನ್ನಡ (Kannada)",
             "ml-IN": "മലയാളം (Malayalam)",
-            "mr-IN": "మరాठी (Marathi)",
+            "mr-IN": "मराठी (Marathi)",
             "bn-IN": "বাংলা (Bengali)",
             "gu-IN": "ગુજરાતી (Gujarati)",
             "pa-IN": "ਪੰਜਾਬੀ (Punjabi)",
@@ -220,7 +271,7 @@ def main():
         
         st.markdown(f'<div style="text-align:center;"><span class="lang-badge">🌐 Detected Language: {lang_display}</span></div>', unsafe_allow_html=True)
 
-    # 3. Conversation History Card
+    # 3. Conversation Card
     if st.session_state.state.history:
         st.markdown('<div class="chat-card">', unsafe_allow_html=True)
         for msg in st.session_state.state.history:
@@ -232,7 +283,7 @@ def main():
                 st.markdown(f'<div class="ai-text">{msg["content"]}</div>', unsafe_allow_html=True)
         st.markdown('</div>', unsafe_allow_html=True)
 
-    # 4. Microphone Kiosk Interaction
+    # 4. Microphone Kiosk Control
     st.write("")
     col1, col2, col3 = st.columns([1, 2, 1])
     with col2:
@@ -245,13 +296,13 @@ def main():
             st.session_state.last_audio_hash = curr_hash
             
             with st.spinner("Processing speech..."):
-                # STT Processing via Sarvam
+                # STT via Sarvam
                 stt_res = speech_to_text(audio_data) or {}
                 transcript = stt_res.get("transcript")
                 detected_lang = stt_res.get("language_code")
                 
                 if transcript:
-                    # Automatically set detected language state
+                    # Lock language automatically
                     if detected_lang and not st.session_state.state.language:
                         st.session_state.state.language = detected_lang
                     elif not st.session_state.state.language:
@@ -259,25 +310,31 @@ def main():
                         
                     st.session_state.state.history.append({"role": "user", "content": transcript})
                     
-                    # Agent Conversation Step
+                    # Agent Logic Execution
+                    reply_text = ""
                     try:
-                        agent_res: AgentResult = process_conversation(
-                            st.session_state.state,
-                            transcript
-                        )
+                        agent_res = process_conversation(st.session_state.state, transcript)
                         
-                        if agent_res and hasattr(agent_res, "response_text"):
+                        if hasattr(agent_res, "response_text") and agent_res.response_text:
                             reply_text = agent_res.response_text
-                            st.session_state.state = agent_res.updated_state
+                            if hasattr(agent_res, "updated_state") and agent_res.updated_state:
+                                st.session_state.state = agent_res.updated_state
                         elif isinstance(agent_res, dict):
                             reply_text = agent_res.get("response_text", "")
-                        else:
-                            reply_text = "దయచేసి మీ ప్రశ్నను మరొకసారి తెలపండి."
+                            if "updated_state" in agent_res:
+                                st.session_state.state = agent_res["updated_state"]
                     except Exception as err:
-                        logging.error(f"Error in conversation processing: {err}")
-                        reply_text = "దయచేసి మీ ప్రశ్నను మరొకసారి తెలపండి."
-                    
-                    # Search Pipeline Trigger (when profile information is complete)
+                        logging.error(f"Error processing conversation turn: {err}")
+                        
+                    if not reply_text:
+                        fallbacks = {
+                            "te-IN": "దయచేసి మీ ప్రశ్నను మరొకసారి చెప్పండి.",
+                            "hi-IN": "कृपया अपना प्रश्न दोबारा कहें।",
+                            "ta-IN": "தயவுசெய்து உங்கள் கேள்வியை மீண்டும் சொல்லுங்கள்."
+                        }
+                        reply_text = fallbacks.get(st.session_state.state.language, "Please repeat your question.")
+
+                    # Search Pipeline Trigger (when profiles/requirements are collected)
                     if getattr(st.session_state.state, "conversation_complete", False):
                         search_summary = run_gov_search_pipeline(st.session_state.state)
                         if search_summary:
@@ -286,8 +343,8 @@ def main():
                     st.session_state.state.history.append({"role": "assistant", "content": reply_text})
                     
                     # TTS Voice Response via Sarvam
-                    tts_b64 = text_to_speech(reply_text, st.session_state.state.language)
-                    st.session_state.tts_audio_b64 = tts_b64
+                    raw_tts = text_to_speech(reply_text, st.session_state.state.language)
+                    st.session_state.tts_audio_b64 = format_audio_b64(raw_tts)
                     
                     st.rerun()
 
