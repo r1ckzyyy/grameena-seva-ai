@@ -5,3 +5,4 @@ tavily-python==0.7.2
 firecrawl-py==2.5.4
 requests==2.32.3
 qrcode[pil]==8.0
+streamlit-realtime-audio-recorder==0.1.2

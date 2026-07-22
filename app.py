@@ -1,7 +1,7 @@
 """
 Grameen Seva AI Hub — Voice-first agricultural subsidy finder for science-fair kiosk.
 
-Pipeline: Mic → Sarvam STT → Gemini 2.5 (Tavily + Firecrawl tools) → Metric cards → Sarvam TTS
+Pipeline: Mic → Sarvam STT → Gemini 2.0 Flash-Lite (Tavily + Firecrawl tools) → Metric cards → Sarvam TTS
 """
 
 from __future__ import annotations
@@ -386,9 +386,12 @@ def tavily_client(api_key: str):
 
 @st.cache_resource
 def firecrawl_client(api_key: str):
-    from firecrawl import Firecrawl
+    import firecrawl
 
-    return Firecrawl(api_key=api_key)
+    client_class = getattr(firecrawl, "Firecrawl", None) or getattr(firecrawl, "FirecrawlApp", None)
+    if client_class is None:
+        raise RuntimeError("Installed firecrawl-py does not expose a supported client")
+    return client_class(api_key=api_key)
 
 
 # ---------------------------------------------------------------------------
@@ -452,7 +455,9 @@ def search_schemes(query: str, state: str) -> str:
 def get_scheme_details(url: str) -> str:
     """Scrape full scheme page content via Firecrawl."""
     client = firecrawl_client(get_secret("FIRECRAWL_API_KEY"))
-    doc = client.scrape(url, formats=["markdown"])
+    doc = client.scrape(url, formats=["markdown"]) if hasattr(client, "scrape") else client.scrape_url(
+        url, params={"formats": ["markdown"]}
+    )
     md = doc.markdown if hasattr(doc, "markdown") else doc.get("markdown", "")
     return (md[:8000] + "\n[truncated]") if len(md) > 8000 else md
 
@@ -526,7 +531,7 @@ def _parse_json(text: str) -> dict[str, Any]:
 
 
 def run_agent(transcript: str, state: str, category: str, language_code: str) -> dict[str, Any]:
-    """Gemini 2.5 Flash agent loop with Tavily + Firecrawl tools."""
+    """Legacy Gemini 2.0 Flash-Lite agent loop retained for compatibility."""
     client = gemini_client(get_secret("GEMINI_API_KEY"))
     user_msg = (
         f"Farmer said: {transcript}\n"
@@ -537,7 +542,7 @@ def run_agent(transcript: str, state: str, category: str, language_code: str) ->
 
     for _ in range(8):
         response = client.models.generate_content(
-            model="gemini-3.5-flash-lite",
+        model="gemini-2.0-flash-lite",
             contents=contents,
             config=types.GenerateContentConfig(
                 system_instruction=SYSTEM_PROMPT,
@@ -590,6 +595,17 @@ def format_inr(amount: int | float) -> str:
     return f"₹{','.join(parts + [last3])}"
 
 
+def automatic_recording() -> bytes | None:
+    """Record one utterance and return it after browser-side silence detection."""
+    from streamlit_realtime_audio_recorder import audio_recorder
+
+    recording = audio_recorder(interval=50, threshold=-55, silenceTimeout=1500)
+    if not recording or recording.get("status") != "stopped":
+        return None
+    encoded = recording.get("audioData")
+    return base64.b64decode(encoded) if encoded else None
+
+
 def process_recording(audio_bytes: bytes) -> bool:
     conversation: ConversationState = st.session_state.conversation
     work = st.status("Working on your request…", expanded=True)
@@ -631,17 +647,19 @@ def process_recording(audio_bytes: bytes) -> bool:
             st.error(f"Assistant request failed: {exc}")
             return False
     conversation.result = result
-    if result.next_question:
-        conversation.add_turn("assistant", result.next_question)
-    elif result.conversation_complete and result.voice_response:
-        conversation.add_turn("assistant", result.voice_response)
+    # The text shown and the text spoken must always be identical.
+    spoken_response = result.voice_response or result.next_question
+    if result.next_question and result.next_question not in spoken_response:
+        spoken_response = f"{spoken_response}\n{result.next_question}".strip()
+    if spoken_response:
+        conversation.add_turn("assistant", spoken_response)
 
     st.session_state.equipment = result.equipment_or_input
     st.session_state.scheme_name = result.scheme_name or ""
     st.session_state.subsidy_percent = result.subsidy_percent
     st.session_state.max_claim_inr = result.max_claim_inr
     st.session_state.missing_criteria = ", ".join(result.missing_criteria)
-    st.session_state.voice_response = result.voice_response or result.next_question
+    st.session_state.voice_response = spoken_response
     st.session_state.card_status = "success" if result.conversation_complete else "warning"
 
     if result.conversation_complete:
@@ -674,6 +692,25 @@ def render_metrics() -> None:
         return
 
     status = st.session_state.card_status
+    # Unknown values are omitted instead of displayed as empty dashboard data.
+    if st.session_state.scheme_name:
+        st.markdown(
+            f'<div class="scheme-banner">{html.escape(st.session_state.scheme_name)}</div>',
+            unsafe_allow_html=True,
+        )
+    cards = []
+    card_class = "metric-card warning" if status == "warning" else "metric-card"
+    if result.subsidy_percent > 0:
+        cards.append(f'<div class="{card_class}"><div class="metric-label">Subsidy Percentage</div><div class="metric-value">{result.subsidy_percent}%</div></div>')
+    if result.max_claim_inr > 0:
+        cards.append(f'<div class="{card_class}"><div class="metric-label">Maximum Claimable Amount</div><div class="metric-value highlight">{format_inr(result.max_claim_inr)}</div></div>')
+    if st.session_state.equipment:
+        cards.append(f'<div class="metric-card"><div class="metric-label">Equipment / Input</div><div class="metric-value" style="font-size:1.6rem;">{html.escape(st.session_state.equipment)}</div></div>')
+    if st.session_state.scheme_name:
+        cards.append(f'<div class="metric-card"><div class="metric-label">Eligible Scheme</div><div class="metric-value" style="font-size:1.5rem;">{html.escape(st.session_state.scheme_name)}</div></div>')
+    if cards:
+        st.markdown(f'<div class="metric-grid">{"".join(cards)}</div>', unsafe_allow_html=True)
+    return
     if st.session_state.scheme_name:
         st.markdown(
             f'<div class="scheme-banner">📋 {st.session_state.scheme_name}</div>',
@@ -747,14 +784,12 @@ st.markdown('<div class="mic-help">I will detect your language and ask one quest
 
 mic_col_left, mic_col_center, mic_col_right = st.columns([1, 2, 1])
 with mic_col_center:
-    # Streamlit 1.45+ defaults this widget to 16 kHz.
-    audio = st.audio_input("🎙️ Tap microphone to start • use stop when finished", key="kiosk_mic")
+    audio = automatic_recording()
 
 conversation: ConversationState = st.session_state.conversation
 if not conversation.turns:
     st.markdown(
-        '<div class="status-message">🎙️ Tap the microphone, speak in your language, '
-        'then press the stop button. Your question will appear below.</div>',
+        '<div class="status-message">🎙️ Tap once and speak. I will listen, understand, and reply automatically.</div>',
         unsafe_allow_html=True,
     )
 if conversation.turns:
@@ -788,14 +823,9 @@ if audio is not None:
     audio_bytes = audio.getvalue()
     audio_hash = hash(audio_bytes)
     if audio_hash != st.session_state.last_audio_hash:
-        st.markdown(
-            '<div class="status-message">✅ Your recording is ready. Press the button below to get your answer.</div>',
-            unsafe_allow_html=True,
-        )
-        if st.button("✅ Get my answer", use_container_width=True, key="submit_recording"):
-            if process_recording(audio_bytes):
-                st.session_state.last_audio_hash = audio_hash
-                st.rerun()
+        if process_recording(audio_bytes):
+            st.session_state.last_audio_hash = audio_hash
+            st.rerun()
 
 # The legacy layout below is retained in source only while this migration is staged.
 # It is unreachable so no old controls or duplicate dashboard are rendered.

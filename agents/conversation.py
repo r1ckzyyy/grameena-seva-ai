@@ -15,10 +15,12 @@ from services.research import get_scheme_details, search_schemes
 
 
 MODEL_PREFERENCES = (
-    "gemini-flash-latest",
-    "gemini-3.5-flash-lite",
-    "gemini-3.6-flash",
-    "gemini-3.1-flash-lite",
+    # Keep the kiosk's routine turns on the lower-cost 2.0 Flash-Lite model.
+    "gemini-2.0-flash-lite",
+    "gemini-2.0-flash",
+    # Fallbacks keep deployments working when a key has not enabled 2.0.
+    "gemini-2.5-flash-lite",
+    "gemini-2.5-flash",
 )
 
 
@@ -55,7 +57,11 @@ def _parse(text: str) -> dict[str, Any]:
 
 
 def _history(state: ConversationState) -> str:
-    return "\n".join(f"{turn['role']}: {turn['text']}" for turn in state.turns)
+    # Assistant questions are already represented by the structured result.
+    # Do not let them be mistaken for things the farmer actually said.
+    return "\n".join(
+        f"farmer: {turn['text']}" for turn in state.turns if turn["role"] == "farmer"
+    )
 
 
 def _tool_declarations() -> list[types.Tool]:

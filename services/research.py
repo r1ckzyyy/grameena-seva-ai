@@ -29,10 +29,21 @@ def search_schemes(query: str, state: str, api_key: str) -> str:
 
 
 def get_scheme_details(url: str, api_key: str) -> str:
-    from firecrawl import Firecrawl
-
     if not _is_official(url):
         return ""
-    doc = Firecrawl(api_key=api_key).scrape(url, formats=["markdown"])
+
+    # firecrawl-py 2.5.x exposes FirecrawlApp; newer releases expose
+    # Firecrawl. Support both so a package/API naming change cannot break the
+    # entire conversation after search succeeds.
+    import firecrawl
+
+    client_class = getattr(firecrawl, "Firecrawl", None) or getattr(firecrawl, "FirecrawlApp", None)
+    if client_class is None:
+        raise RuntimeError("Installed firecrawl-py does not expose a supported client")
+    client = client_class(api_key=api_key)
+    if hasattr(client, "scrape"):
+        doc = client.scrape(url, formats=["markdown"])
+    else:
+        doc = client.scrape_url(url, params={"formats": ["markdown"]})
     markdown = doc.markdown if hasattr(doc, "markdown") else doc.get("markdown", "")
     return str(markdown)[:8000]
