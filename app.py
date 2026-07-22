@@ -5,7 +5,7 @@ Science Fair Kiosk Edition (Wide-Screen Desktop Layout)
 Pipeline:
 1. Audio Input (Browser Media API via st.audio_input)
 2. Sarvam Speech-to-Text (saaras:v3)
-3. Gemini 2.5 Flash Agent (with Tavily & Firecrawl tools)
+3. Gemini 2.0 Flash Agent (with Tavily tools)
 4. Sarvam Text-to-Speech (bulbul:v3)
 5. Kiosk Metric Cards & Audio Autoplay
 """
@@ -243,7 +243,7 @@ def generate_tts_sarvam(text: str, target_lang: str) -> bytes | None:
     return None
 
 def query_gemini_agent(farmer_query: str, state: str, category: str) -> dict:
-    """Process query through Gemini 2.5 Flash to search & analyze subsidies."""
+    """Process query through Gemini 2.0 Flash to search & analyze subsidies."""
     gemini_key = get_secret("GEMINI_API_KEY")
     tavily_key = get_secret("TAVILY_API_KEY")
     
@@ -283,7 +283,7 @@ def query_gemini_agent(farmer_query: str, state: str, category: str) -> dict:
 
     client = genai.Client(api_key=gemini_key)
     response = client.models.generate_content(
-        model="gemini-2.5-flash",
+        model="gemini-2.0-flash", # <-- FIXED FROM 2.5 to 2.0
         contents=system_prompt,
         config=types.GenerateContentConfig(response_mime_type="application/json")
     )
