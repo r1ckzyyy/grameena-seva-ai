@@ -16,9 +16,9 @@ from models.conversation import AgentResult, ConversationState
 from services.research import get_scheme_details, search_schemes
 
 
-# This is the only Gemini model used by the application. Keep it explicit so
-# quota configuration cannot silently select an obsolete lower-cost model.
-GEMINI_MODEL = "gemini-2.5-flash"
+# Use Google's stable alias instead of a dated model ID. Dated IDs can return
+# 404 for newly created API keys even when the model appears in model listings.
+GEMINI_MODEL = "gemini-flash-latest"
 MAX_GEMINI_RETRIES = 3
 
 
@@ -176,7 +176,6 @@ def _run_tool(name: str, args: dict[str, Any], state: ConversationState, keys: d
 
 def run_conversation(state: ConversationState, gemini_key: str, tavily_key: str, firecrawl_key: str) -> AgentResult:
     """Run one conversational turn without crashing on transient Gemini failures."""
-    client = _gemini_client(gemini_key)
     detected = state.language_code or "unknown"
     prompt = (
         f"Detected language: {detected}\n"
@@ -187,6 +186,7 @@ def run_conversation(state: ConversationState, gemini_key: str, tavily_key: str,
     contents: list[types.Content] = [types.Content(role="user", parts=[types.Part(text=prompt)])]
 
     try:
+        client = _gemini_client(gemini_key)
         for _ in range(6):
             response = _generate_with_retry(client, contents, CONVERSATION_PROMPT, _tool_declarations())
             candidate = response.candidates[0] if response.candidates else None

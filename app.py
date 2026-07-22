@@ -1,365 +1,403 @@
+"""Grameen Seva AI Hub: voice-first subsidy assistant for Indian farmers."""
+
+from __future__ import annotations
+
 import base64
-import logging
-import time
+import html
+import json
+import re
+
 import streamlit as st
+from google.genai import types
 
-# Setup Logging
-logging.basicConfig(level=logging.INFO)
-
-# ---------------------------------------------------------
-# GEMINI SDK DYNAMIC COMPATIBILITY
-# Handles both 'google-genai' and 'google-generativeai'
-# ---------------------------------------------------------
-GEMINI_KEY = st.secrets.get("gemini_api_key") or st.secrets.get("GEMINI_API_KEY")
-
-try:
-    from google import genai
-    from google.genai.errors import APIError
-    SDK_MODE = "google-genai"
-except ImportError:
-    import google.generativeai as genai
-    APIError = Exception
-    SDK_MODE = "google-generativeai"
-
-if GEMINI_KEY:
-    try:
-        if SDK_MODE == "google-genai":
-            ai_client = genai.Client(api_key=GEMINI_KEY)
-        else:
-            genai.configure(api_key=GEMINI_KEY)
-            ai_client = True
-    except Exception as e:
-        logging.error(f"Gemini initialization error: {e}")
-        ai_client = None
-else:
-    ai_client = None
-    st.error("Configuration Error: GEMINI_API_KEY is missing from Streamlit secrets.")
-
-# ---------------------------------------------------------
-# PROJECT IMPORTS
-# ---------------------------------------------------------
+from agents.conversation import GEMINI_MODEL, _gemini_client, _localized_fallback, run_conversation
 from models.conversation import ConversationState
-from agents.conversation import process_conversation, AgentResult
 from services.recorder import autonomous_recorder
-from services.sarvam import speech_to_text, text_to_speech
-from services.research import tavily_search, firecrawl_scrape
+from services.sarvam import text_to_speech, transcribe
 
-# ---------------------------------------------------------
-# PAGE CONFIGURATION & KIOSK STYLING
-# ---------------------------------------------------------
+
 st.set_page_config(
     page_title="Grameen Seva AI Hub",
     page_icon="🌾",
     layout="centered",
-    initial_sidebar_state="collapsed"
+    initial_sidebar_state="collapsed",
 )
 
-st.markdown("""
-    <style>
-    /* Hide Streamlit navbar/footer and browser audio player element */
-    #MainMenu, footer, header { visibility: hidden !important; }
-    audio { display: none !important; visibility: hidden !important; height: 0px !important; }
-    
-    .stApp {
-        background-color: #F8FBF8;
-        font-family: 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
-    }
-    .header-container {
-        text-align: center;
-        padding-top: 1rem;
-        padding-bottom: 0.5rem;
-    }
-    .main-title {
-        color: #1B5E20;
-        font-size: 2.8rem;
-        font-weight: 800;
-        margin-bottom: 0.2rem;
-        letter-spacing: -0.5px;
-    }
-    .sub-title {
-        color: #388E3C;
-        font-size: 1.15rem;
-        font-weight: 500;
-        margin-bottom: 1rem;
-    }
-    .lang-badge {
-        display: inline-block;
-        background-color: #E8F5E9;
-        color: #2E7D32;
-        padding: 6px 16px;
-        border-radius: 20px;
-        font-size: 0.95rem;
-        font-weight: 600;
-        border: 1px solid #A5D6A7;
-        margin-bottom: 1.5rem;
-    }
-    .chat-card {
-        background: #FFFFFF;
-        border-radius: 16px;
-        padding: 20px;
-        margin-bottom: 16px;
-        box-shadow: 0 4px 12px rgba(0,0,0,0.03);
-        border: 1px solid #E0E0E0;
-    }
-    .user-label {
-        color: #2E7D32;
-        font-weight: 700;
-        font-size: 1.1rem;
-        margin-bottom: 4px;
-    }
-    .user-text {
-        color: #1C2A1E;
-        font-size: 1.1rem;
-        line-height: 1.5;
-        margin-bottom: 16px;
-    }
-    .ai-label {
-        color: #1B5E20;
-        font-weight: 700;
-        font-size: 1.1rem;
-        margin-bottom: 4px;
-    }
-    .ai-text {
-        color: #263238;
-        font-size: 1.1rem;
-        line-height: 1.6;
-        border-left: 4px solid #4CAF50;
-        padding-left: 12px;
-        background-color: #FAFAFA;
-        padding-top: 8px;
-        padding-bottom: 8px;
-        border-radius: 0 8px 8px 0;
-    }
-    </style>
-""", unsafe_allow_html=True)
 
-# ---------------------------------------------------------
-# SESSION STATE INITIALIZATION
-# ---------------------------------------------------------
-def init_state():
-    if "state" not in st.session_state:
-        st.session_state.state = ConversationState(
-            language=None,
-            history=[],
-            district=None,
-            state=None,
-            land_size=None,
-            farmer_category=None,
-            equipment_need=None,
-            documents=[],
-            eligibility_status=None,
-            conversation_complete=False
-        )
-    if "last_audio_hash" not in st.session_state:
-        st.session_state.last_audio_hash = None
-    if "tts_audio_b64" not in st.session_state:
-        st.session_state.tts_audio_b64 = None
-
-# ---------------------------------------------------------
-# HELPER UTILITIES
-# ---------------------------------------------------------
-def generate_gemini_summary(prompt: str) -> str:
-    """Executes Gemini generation with retry logic supporting both SDKs."""
-    if not ai_client:
-        return ""
-        
-    for attempt in range(3):
-        try:
-            if SDK_MODE == "google-genai":
-                res = ai_client.models.generate_content(
-                    model="gemini-1.5-flash",
-                    contents=prompt
-                )
-                if res and res.text:
-                    return res.text
-            else:
-                model = genai.GenerativeModel("gemini-1.5-flash")
-                res = model.generate_content(prompt)
-                if res and res.text:
-                    return res.text
-        except Exception as e:
-            logging.warning(f"Gemini API attempt {attempt + 1} failed: {e}")
-            time.sleep(1.5 * (attempt + 1))
-    return ""
-
-def format_audio_b64(raw_tts) -> str:
-    """Ensures TTS output is formatted as a valid base64 string."""
-    if not raw_tts:
-        return ""
-    if isinstance(raw_tts, bytes):
-        return base64.b64encode(raw_tts).decode("utf-8")
-    return str(raw_tts)
-
-# ---------------------------------------------------------
-# SEARCH PIPELINE
-# ---------------------------------------------------------
-def run_gov_search_pipeline(state: ConversationState) -> str:
-    """Executes Tavily search strictly on gov domains, scrapes via Firecrawl, and summarizes via Gemini."""
-    district = getattr(state, "district", "") or ""
-    st_name = getattr(state, "state", "") or ""
-    category = getattr(state, "farmer_category", "") or ""
-    equipment = getattr(state, "equipment_need", "") or ""
-    lang = getattr(state, "language", None) or "hi-IN"
-    
-    query = f"government scheme subsidy {equipment} {category} {district} {st_name} site:myscheme.gov.in OR site:gov.in"
-    
+def secret(name: str) -> str:
+    """Read a deployment secret without making the app crash when it is absent."""
     try:
-        search_results = tavily_search(query)
-        if search_results and "results" in search_results and search_results["results"]:
-            official_url = None
-            for item in search_results["results"]:
-                url = item.get("url", "")
-                if "gov.in" in url:
-                    official_url = url
-                    break
-                    
-            if official_url:
-                page_text = firecrawl_scrape(official_url)
-                if page_text:
-                    prompt = f"""
-                    You are an agricultural advisor assisting an Indian farmer at a government kiosk.
-                    Summarize the verified government subsidy/scheme details clearly and concisely.
-                    Rely strictly on the provided web content. Do NOT invent eligibility rules or subsidy amounts.
-                    MUST reply entirely in the farmer's detected language (Language code: {lang}).
-                    
-                    Scraped Web Content:
-                    {page_text[:4000]}
-                    """
-                    summary = generate_gemini_summary(prompt)
-                    if summary:
-                        return summary
-    except Exception as e:
-        logging.error(f"Search pipeline execution error: {e}")
-        
-    fallback_map = {
-        "te-IN": "మీ పరిధిలోని ప్రభుత్వ సబ్సిడీ వివరాల సమాచారం కోసం అధికారిక వెబ్‌సైట్ myscheme.gov.in చూడవచ్చు.",
-        "hi-IN": "आपकी सरकारी सब्सिडी योजना की जानकारी के लिए myscheme.gov.in पर देखें।",
-        "ta-IN": "உங்கள் அரசு மானிய திட்ட தகவல்களுக்கு myscheme.gov.in வலைத்தளத்தை பார்க்கவும்.",
-        "kn-IN": "ನಿಮ್ಮ ಅರ್ಹತೆಗೆ ಸೂಕ್ತವಾದ ಸರ್ಕಾರಿ ಯೋಜನೆಗಳ ಮಾಹಿತಿಗಾಗಿ myscheme.gov.in ಗೆ ಭೇಟಿ ನೀಡಿ.",
-        "ml-IN": "നിങ്ങളുടെ യോഗ്യതയ്ക്കനുസരിച്ചുള്ള സർക്കാർ പദ്ധതികളുടെ വിവരങ്ങൾക്ക് myscheme.gov.in സന്ദർശിക്കുക."
+        value = st.secrets.get(name, "")
+    except (FileNotFoundError, KeyError, TypeError):
+        value = ""
+    return str(value or "")
+
+
+def init_state() -> None:
+    defaults = {
+        "conversation": ConversationState(),
+        "tts_audio": None,
+        "tts_token": 0,
+        "last_played_tts_token": -1,
+        "last_component_event_id": None,
+        "last_audio_hash": "",
+        "error_message": "",
+        "form_data": {},
+        "form_image_hash": "",
+        "email_draft": "",
     }
-    return fallback_map.get(lang, "For official government scheme details, please visit myscheme.gov.in.")
+    for key, value in defaults.items():
+        st.session_state.setdefault(key, value)
 
-# ---------------------------------------------------------
-# MAIN KIOSK APPLICATION
-# ---------------------------------------------------------
-def main():
-    init_state()
-    
-    # 1. Single Title & Subtitle Header
-    st.markdown("""
-        <div class="header-container">
-            <div class="main-title">🌾 Grameen Seva AI Hub</div>
-            <div class="sub-title">Voice-First Government Subsidy Finder for Indian Farmers</div>
-        </div>
-    """, unsafe_allow_html=True)
-    
-    # 2. Language Indicator
-    if st.session_state.state.language:
-        lang_display = {
-            "te-IN": "తెలుగు (Telugu)",
-            "hi-IN": "हिंदी (Hindi)",
-            "ta-IN": "தமிழ் (Tamil)",
-            "kn-IN": "ಕನ್ನಡ (Kannada)",
-            "ml-IN": "മലയാളം (Malayalam)",
-            "mr-IN": "मराठी (Marathi)",
-            "bn-IN": "বাংলা (Bengali)",
-            "gu-IN": "ગુજરાતી (Gujarati)",
-            "pa-IN": "ਪੰਜਾਬੀ (Punjabi)",
-            "en-IN": "English"
-        }.get(st.session_state.state.language, st.session_state.state.language)
-        
-        st.markdown(f'<div style="text-align:center;"><span class="lang-badge">🌐 Detected Language: {lang_display}</span></div>', unsafe_allow_html=True)
 
-    # 3. Conversation Card
-    if st.session_state.state.history:
-        st.markdown('<div class="chat-card">', unsafe_allow_html=True)
-        for msg in st.session_state.state.history:
-            if msg["role"] == "user":
-                st.markdown('<div class="user-label">🧑‍🌾 Farmer:</div>', unsafe_allow_html=True)
-                st.markdown(f'<div class="user-text">{msg["content"]}</div>', unsafe_allow_html=True)
-            else:
-                st.markdown('<div class="ai-label">🤖 Grameen AI:</div>', unsafe_allow_html=True)
-                st.markdown(f'<div class="ai-text">{msg["content"]}</div>', unsafe_allow_html=True)
-        st.markdown('</div>', unsafe_allow_html=True)
+def format_inr(amount: int) -> str:
+    if amount <= 0:
+        return "Not stated on the official source"
+    value = str(int(amount))
+    if len(value) <= 3:
+        return f"₹{value}"
+    last_three, rest = value[-3:], value[:-3]
+    groups: list[str] = []
+    while len(rest) > 2:
+        groups.insert(0, rest[-2:])
+        rest = rest[:-2]
+    if rest:
+        groups.insert(0, rest)
+    return f"₹{','.join(groups + [last_three])}"
 
-    # 4. Microphone Kiosk Control
-    st.write("")
-    col1, col2, col3 = st.columns([1, 2, 1])
-    with col2:
-        audio_data = autonomous_recorder()
 
-    # 5. Speech & Agent Pipeline Processing
-    if audio_data:
-        curr_hash = hash(audio_data)
-        if curr_hash != st.session_state.last_audio_hash:
-            st.session_state.last_audio_hash = curr_hash
-            
-            with st.spinner("Processing speech..."):
-                # STT via Sarvam
-                stt_res = speech_to_text(audio_data) or {}
-                transcript = stt_res.get("transcript")
-                detected_lang = stt_res.get("language_code")
-                
-                if transcript:
-                    # Lock language automatically
-                    if detected_lang and not st.session_state.state.language:
-                        st.session_state.state.language = detected_lang
-                    elif not st.session_state.state.language:
-                        st.session_state.state.language = "hi-IN"
-                        
-                    st.session_state.state.history.append({"role": "user", "content": transcript})
-                    
-                    # Agent Logic Execution
-                    reply_text = ""
-                    try:
-                        agent_res = process_conversation(st.session_state.state, transcript)
-                        
-                        if hasattr(agent_res, "response_text") and agent_res.response_text:
-                            reply_text = agent_res.response_text
-                            if hasattr(agent_res, "updated_state") and agent_res.updated_state:
-                                st.session_state.state = agent_res.updated_state
-                        elif isinstance(agent_res, dict):
-                            reply_text = agent_res.get("response_text", "")
-                            if "updated_state" in agent_res:
-                                st.session_state.state = agent_res["updated_state"]
-                    except Exception as err:
-                        logging.error(f"Error processing conversation turn: {err}")
-                        
-                    if not reply_text:
-                        fallbacks = {
-                            "te-IN": "దయచేసి మీ ప్రశ్నను మరొకసారి చెప్పండి.",
-                            "hi-IN": "कृपया अपना प्रश्न दोबारा कहें।",
-                            "ta-IN": "தயவுசெய்து உங்கள் கேள்வியை மீண்டும் சொல்லுங்கள்."
-                        }
-                        reply_text = fallbacks.get(st.session_state.state.language, "Please repeat your question.")
+def language_name(code: str) -> str:
+    names = {
+        "hi": "हिन्दी", "te": "తెలుగు", "ta": "தமிழ்", "kn": "ಕನ್ನಡ",
+        "mr": "मराठी", "bn": "বাংলা", "gu": "ગુજરાતી", "pa": "ਪੰਜਾਬੀ",
+    }
+    code = (code or "").lower()
+    return next((name for prefix, name in names.items() if code.startswith(prefix)), "")
 
-                    # Search Pipeline Trigger (when profiles/requirements are collected)
-                    if getattr(st.session_state.state, "conversation_complete", False):
-                        search_summary = run_gov_search_pipeline(st.session_state.state)
-                        if search_summary:
-                            reply_text = search_summary
-                            
-                    st.session_state.state.history.append({"role": "assistant", "content": reply_text})
-                    
-                    # TTS Voice Response via Sarvam
-                    raw_tts = text_to_speech(reply_text, st.session_state.state.language)
-                    st.session_state.tts_audio_b64 = format_audio_b64(raw_tts)
-                    
-                    st.rerun()
 
-    # 6. Invisible Background Audio Autoplay
-    if st.session_state.get("tts_audio_b64"):
-        b64_str = st.session_state.tts_audio_b64
-        st.markdown(
-            f'''
-            <audio autoplay style="display:none !important; visibility:hidden !important;">
-                <source src="data:audio/wav;base64,{b64_str}" type="audio/wav">
-            </audio>
-            ''',
-            unsafe_allow_html=True
+def parse_json_object(text: str) -> dict[str, str]:
+    cleaned = (text or "").strip()
+    fenced = re.search(r"```(?:json)?\s*([\s\S]*?)\s*```", cleaned)
+    if fenced:
+        cleaned = fenced.group(1).strip()
+    try:
+        value = json.loads(cleaned)
+        return {str(key): str(item or "") for key, item in value.items()} if isinstance(value, dict) else {}
+    except (json.JSONDecodeError, AttributeError, TypeError):
+        match = re.search(r"\{[\s\S]*\}", cleaned)
+        if match:
+            try:
+                value = json.loads(match.group())
+                return {str(key): str(item or "") for key, item in value.items()} if isinstance(value, dict) else {}
+            except (json.JSONDecodeError, AttributeError, TypeError):
+                return {}
+    return {}
+
+
+def extract_form(image_bytes: bytes, mime_type: str) -> dict[str, str]:
+    prompt = """
+You extract information from an Indian government agricultural subsidy form.
+Read only text that is visible in the image. Do not guess or fill missing values.
+Return only JSON with these keys:
+farmer_name, father_or_spouse_name, mobile_number, address, state, district,
+village, land_size, farmer_category, equipment_or_input, scheme_name,
+application_number, documents_visible, unclear_fields.
+Use an empty string for fields that are not visible. Keep names and addresses
+in the script shown on the form. Do not provide eligibility advice.
+"""
+    client = _gemini_client(secret("GEMINI_API_KEY"))
+    response = client.models.generate_content(
+        model=GEMINI_MODEL,
+        contents=[types.Content(role="user", parts=[
+            types.Part(text=prompt),
+            types.Part.from_bytes(data=image_bytes, mime_type=mime_type or "image/jpeg"),
+        ])],
+        config=types.GenerateContentConfig(temperature=0.1),
+    )
+    return parse_json_object(response.text or "")
+
+
+def build_email_draft(form_data: dict[str, str], result: object, language_code: str) -> str:
+    prompt = f"""
+Draft a polite email to the appropriate Indian government agriculture office
+asking how to claim the subsidy. Do not claim that the farmer is eligible and
+do not invent facts, amounts, scheme names, or email addresses. Mention that
+the attached form is being submitted for guidance. Write the email in English
+unless the detected language is Telugu, Hindi, or Tamil, in which case write
+it in that language. Return only the email body, with a clear subject line.
+
+Detected language: {language_code}
+Form details: {json.dumps(form_data, ensure_ascii=False)}
+Conversation details: {json.dumps({
+    'scheme_name': getattr(result, 'scheme_name', ''),
+    'equipment_or_input': getattr(result, 'equipment_or_input', ''),
+    'district': getattr(result, 'district', ''),
+    'state': getattr(result, 'state', ''),
+}, ensure_ascii=False)}
+"""
+    client = _gemini_client(secret("GEMINI_API_KEY"))
+    response = client.models.generate_content(
+        model=GEMINI_MODEL,
+        contents=prompt,
+        config=types.GenerateContentConfig(temperature=0.2),
+    )
+    return (response.text or "").strip()
+
+
+def render_form_assistant(conversation: ConversationState) -> None:
+    st.markdown("### Scan a subsidy form")
+    st.caption("Take a clear photo of a printed form. Review every extracted detail before using it.")
+    if not secret("GEMINI_API_KEY"):
+        st.info("Add GEMINI_API_KEY to use form scanning.")
+        return
+    image = st.camera_input("Capture the form", key="subsidy_form_camera")
+    if image is not None:
+        image_hash = str(hash(image.getvalue()))
+        if image_hash != st.session_state.form_image_hash:
+            st.session_state.form_image_hash = image_hash
+            st.session_state.form_data = {}
+            st.session_state.email_draft = ""
+        if st.button("Read form", key="read_form", use_container_width=True):
+            try:
+                with st.spinner("Reading the form…"):
+                    st.session_state.form_data = extract_form(image.getvalue(), image.type)
+                if not st.session_state.form_data:
+                    st.warning("I could not read the form. Place it flat in good light and try again.")
+                else:
+                    st.success("Form details extracted. Please review them below.")
+            except Exception:
+                st.error("The form could not be read right now. Check the photo and try again.")
+
+    form_data = st.session_state.form_data
+    if not form_data:
+        return
+    st.markdown("#### Review extracted details")
+    editable_keys = [
+        "farmer_name", "father_or_spouse_name", "mobile_number", "address",
+        "state", "district", "village", "land_size", "farmer_category",
+        "equipment_or_input", "scheme_name", "application_number",
+        "documents_visible", "unclear_fields",
+    ]
+    cols = st.columns(2)
+    for index, key in enumerate(editable_keys):
+        label = key.replace("_", " ").title()
+        with cols[index % 2]:
+            form_data[key] = st.text_input(label, value=form_data.get(key, ""), key=f"form_{key}")
+    st.session_state.form_data = form_data
+    if st.button("Draft email to government office", key="draft_email", use_container_width=True):
+        try:
+            with st.spinner("Drafting the email…"):
+                st.session_state.email_draft = build_email_draft(form_data, conversation.result, conversation.language_code)
+        except Exception:
+            st.error("The email draft could not be prepared. Please try again.")
+    if st.session_state.email_draft:
+        st.markdown("#### Email draft — review before sending")
+        st.text_area("Draft", value=st.session_state.email_draft, height=300, key="email_preview")
+        st.download_button(
+            "Download draft",
+            data=st.session_state.email_draft,
+            file_name="subsidy_claim_email.txt",
+            mime="text/plain",
+            use_container_width=True,
         )
-        st.session_state.tts_audio_b64 = None
 
-if __name__ == "__main__":
-    main()
+
+def handle_recording(audio_bytes: bytes) -> bool:
+    conversation: ConversationState = st.session_state.conversation
+    st.session_state.error_message = ""
+    conversation.set_state("PROCESSING")
+
+    with st.status("Processing your request…", expanded=True) as status:
+        status.write("Converting your voice to text…")
+        try:
+            transcript, detected_language = transcribe(audio_bytes, secret("SARVAM_API_KEY"))
+        except Exception:
+            st.session_state.error_message = _localized_fallback(conversation.language_code, "temporary")
+            conversation.set_state("LISTENING")
+            status.update(label="Please try again", state="error", expanded=False)
+            return False
+
+        if not transcript:
+            st.session_state.error_message = _localized_fallback(conversation.language_code, "repeat")
+            conversation.set_state("LISTENING")
+            status.update(label="No speech was detected", state="error", expanded=False)
+            return False
+
+        conversation.transcript = transcript
+        if detected_language:
+            conversation.language_code = detected_language
+        conversation.add_turn("farmer", transcript)
+        conversation.set_state("THINKING")
+        status.write("Understanding your question…")
+
+        result = run_conversation(
+            conversation,
+            secret("GEMINI_API_KEY"),
+            secret("TAVILY_API_KEY"),
+            secret("FIRECRAWL_API_KEY"),
+        )
+        conversation.result = result
+
+        response_text = (result.voice_response or "").strip()
+        if not response_text:
+            response_text = _localized_fallback(conversation.language_code, "prompt")
+        result.voice_response = response_text
+        result.next_question = ""
+        conversation.add_turn("assistant", response_text)
+        conversation.goodbye_detected = result.goodbye_detected
+        conversation.set_state("SPEAKING")
+        status.write("Preparing your answer in the same language…")
+
+        try:
+            st.session_state.tts_audio = text_to_speech(
+                response_text,
+                conversation.language_code or result.language or "hi-IN",
+                secret("SARVAM_API_KEY"),
+            )
+            st.session_state.tts_token += 1
+        except Exception:
+            # The text answer remains useful even if audio generation is temporarily unavailable.
+            st.session_state.tts_audio = None
+            st.session_state.error_message = response_text
+
+        conversation.set_state("COMPLETED" if result.conversation_complete else "LISTENING")
+        status.update(label="Answer ready", state="complete", expanded=False)
+    return True
+
+
+def render_chat(conversation: ConversationState) -> None:
+    if not conversation.turns:
+        st.markdown(
+            '<div class="empty-card">Tap the microphone and speak naturally.<br><small>I will detect your language automatically.</small></div>',
+            unsafe_allow_html=True,
+        )
+        return
+    for turn in conversation.turns:
+        bubble = "farmer-bubble" if turn["role"] == "farmer" else "assistant-bubble"
+        label = "You" if turn["role"] == "farmer" else "Grameen AI"
+        st.markdown(
+            f'<div class="bubble {bubble}"><div class="bubble-label">{label}</div>{html.escape(turn["text"])}</div>',
+            unsafe_allow_html=True,
+        )
+
+
+def render_result(conversation: ConversationState) -> None:
+    result = conversation.result
+    if not result.conversation_complete or result.goodbye_detected:
+        return
+
+    st.markdown('<div class="result-title">Verified government information</div>', unsafe_allow_html=True)
+    cols = st.columns(2)
+    with cols[0]:
+        st.metric("Subsidy", f"{result.subsidy_percent}%" if result.subsidy_percent else "Not stated")
+    with cols[1]:
+        st.metric("Maximum amount", format_inr(result.max_claim_inr))
+    if result.scheme_name:
+        st.markdown(f"**Scheme:** {html.escape(result.scheme_name)}")
+    if result.equipment_or_input:
+        st.markdown(f"**For:** {html.escape(result.equipment_or_input)}")
+    if result.farmer_category or result.district or result.land_size:
+        details = " · ".join(filter(None, [result.farmer_category, result.district, result.land_size]))
+        st.caption(f"Details considered: {details}")
+    if result.required_documents:
+        st.markdown("**Documents usually required**")
+        st.markdown("\n".join(f"- {html.escape(item)}" for item in result.required_documents))
+    if result.source_url:
+        st.link_button("Open official source", result.source_url, use_container_width=True)
+
+
+def render_styles() -> None:
+    st.markdown(
+        """
+        <style>
+        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700&family=Montserrat:wght@600;700&display=swap');
+        #MainMenu, footer {visibility:hidden;} .stApp {background:#fcf9f8;}
+        .block-container {max-width:760px; padding-top:2.5rem; padding-bottom:18rem;}
+        .brand {text-align:center;color:#0d631b;font:700 2.2rem Montserrat;margin-bottom:.25rem;}
+        .subtitle {text-align:center;color:#40493d;font-size:1.05rem;margin-bottom:1.5rem;}
+        .empty-card {background:#fff;border:1px solid #dce7d8;border-radius:24px;padding:2rem;text-align:center;color:#0d631b;font-size:1.35rem;font-weight:600;margin:1rem 0 2rem;box-shadow:0 10px 30px #2e7d3214;}
+        .empty-card small {color:#596653;font-size:1rem;font-weight:400;}
+        .bubble {border-radius:22px;padding:1rem 1.2rem;margin:.7rem 0;font-size:1.15rem;line-height:1.55;white-space:pre-wrap;}
+        .bubble-label {font-size:.8rem;font-weight:700;margin-bottom:.25rem;opacity:.75;}
+        .farmer-bubble {background:#81c784;color:#fff;margin-left:15%;border-top-right-radius:5px;}
+        .assistant-bubble {background:#fff;color:#1b1b1b;margin-right:8%;border:1px solid #dce7d8;box-shadow:0 8px 24px #2e7d3210;border-top-left-radius:5px;}
+        .result-title {color:#0d631b;font:700 1.3rem Montserrat;margin-top:1.5rem;margin-bottom:.7rem;}
+        div[data-testid="stMetric"] {background:#fff;border:1px solid #dce7d8;border-radius:16px;padding:1rem;}
+        div[data-testid="stCustomComponentV1"] {position:fixed!important;z-index:1000!important;left:50%!important;bottom:.25rem!important;transform:translateX(-50%)!important;width:320px!important;height:320px!important;background:transparent!important;}
+        </style>
+        """,
+        unsafe_allow_html=True,
+    )
+
+
+init_state()
+render_styles()
+conversation: ConversationState = st.session_state.conversation
+
+st.markdown('<div class="brand">🌾 Grameen Seva AI Hub</div>', unsafe_allow_html=True)
+st.markdown('<div class="subtitle">Your voice-first guide to government farming schemes</div>', unsafe_allow_html=True)
+
+if conversation.language_code:
+    name = language_name(conversation.language_code)
+    if name:
+        st.success(f"Language detected: {name}")
+
+render_chat(conversation)
+render_result(conversation)
+
+with st.expander("📄 Scan a form and draft a claim email", expanded=False):
+    render_form_assistant(conversation)
+
+if st.session_state.error_message:
+    st.warning(st.session_state.error_message)
+
+missing = [key for key in ("SARVAM_API_KEY", "GEMINI_API_KEY", "TAVILY_API_KEY", "FIRECRAWL_API_KEY") if not secret(key)]
+if missing:
+    st.info("Add the required API keys to Streamlit secrets before using the microphone: " + ", ".join(missing))
+
+if conversation.result.conversation_complete:
+    if st.button("Start a new question", use_container_width=True):
+        for key in ("conversation", "tts_audio", "last_audio_hash", "error_message"):
+            st.session_state.pop(key, None)
+        st.rerun()
+
+audio = autonomous_recorder(
+    active=not conversation.result.conversation_complete and not missing,
+    auto_start=False,
+    tts_audio=None,
+    tts_token=st.session_state.tts_token,
+    resume_after_tts=False,
+)
+
+# A component event is consumed once; this prevents duplicate STT/Gemini calls on reruns.
+audio_bytes: bytes | None = None
+if isinstance(audio, dict):
+    event_id = audio.get("id")
+    fresh = event_id is not None and event_id != st.session_state.last_component_event_id
+    if fresh:
+        st.session_state.last_component_event_id = event_id
+        if audio.get("event") == "error":
+            st.session_state.error_message = audio.get("message", "Microphone permission is required.")
+        elif audio.get("event") == "audio" and audio.get("audio"):
+            try:
+                audio_bytes = base64.b64decode(audio["audio"])
+            except (ValueError, TypeError):
+                st.session_state.error_message = "The recording could not be read. Please try again."
+elif audio is not None:
+    try:
+        audio_bytes = bytes(audio) if isinstance(audio, (bytes, bytearray)) else audio.getvalue()
+    except (AttributeError, TypeError, ValueError):
+        audio_bytes = None
+
+if audio_bytes:
+    audio_hash = str(hash(audio_bytes))
+    if audio_hash != st.session_state.last_audio_hash:
+        st.session_state.last_audio_hash = audio_hash
+        if handle_recording(audio_bytes):
+            st.rerun()
+
+if st.session_state.tts_audio and st.session_state.last_played_tts_token != st.session_state.tts_token:
+    st.audio(st.session_state.tts_audio, format="audio/wav", autoplay=True)
+    st.session_state.last_played_tts_token = st.session_state.tts_token
+elif st.session_state.tts_audio:
+    st.audio(st.session_state.tts_audio, format="audio/wav", autoplay=False)

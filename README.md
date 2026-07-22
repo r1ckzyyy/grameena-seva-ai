@@ -10,7 +10,7 @@
 |---------|------------|
 | Voice input | Autonomous browser recorder with ~2 second silence detection |
 | Speech-to-Text | Sarvam AI `saaras:v3` |
-| AI Agent | Google Gemini 2.5 Flash + function calling, one cached client |
+| AI Agent | Google Gemini stable Flash alias + function calling, one cached client |
 | Web search | Tavily API (`myscheme.gov.in`, `gov.in`) |
 | Page reading | Firecrawl API |
 | Text-to-Speech | Sarvam AI `bulbul:v3` |
@@ -156,7 +156,7 @@ Farmer taps once → browser microphone + automatic silence detection and resume
        ↓
 Sarvam STT (saaras:v3) → transcript
        ↓
-Gemini 2.5 Flash → conversation state and one follow-up question
+Gemini stable Flash alias → conversation state and one follow-up question
        ↓ (only when complete)
 Tavily → one official URL → Firecrawl → one selected official page
        ↓

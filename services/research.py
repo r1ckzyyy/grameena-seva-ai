@@ -44,6 +44,8 @@ def get_scheme_details(url: str, api_key: str) -> str:
     if hasattr(client, "scrape"):
         doc = client.scrape(url, formats=["markdown"])
     else:
-        doc = client.scrape_url(url, params={"formats": ["markdown"]})
+        # firecrawl-py 2.x uses keyword arguments directly. Passing the old
+        # v1 ``params`` envelope causes a 400 "Unrecognized key" response.
+        doc = client.scrape_url(url, formats=["markdown"])
     markdown = doc.markdown if hasattr(doc, "markdown") else doc.get("markdown", "")
     return str(markdown)[:8000]
