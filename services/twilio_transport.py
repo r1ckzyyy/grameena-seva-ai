@@ -56,8 +56,21 @@ class TwilioTransport:
             "mr": "mr-IN", "bn": "bn-IN", "gu": "gu-IN", "pa": "pa-IN",
         }.get((language or "").casefold(), language or "en-IN")
 
+    @staticmethod
+    def _quirky_greeting(language: str, name: str = "") -> str:
+        code = (language or "").casefold()
+        if code.startswith("te"):
+            return f"నమస్తే కాకా, ఏం సంగతులు{(' ' + name) if name else ''}? మీకు ఏ వ్యవసాయ పథకం గురించి తెలుసుకోవాలి?"
+        if code.startswith("hi"):
+            return f"कैसे हो चाचा, क्या हाल-चाल{(' ' + name) if name else ''}? आपको किस खेती योजना के बारे में जानना है?"
+        if code.startswith("ta"):
+            return f"வணக்கம் மாமா, எப்படி இருக்கீங்க{(' ' + name) if name else ''}? எந்த விவசாயத் திட்டம் பற்றி தெரிந்து கொள்ள வேண்டும்?"
+        if code.startswith("kn"):
+            return f"ನಮಸ್ಕಾರ ಕಾಕಾ, ಹೇಗಿದ್ದೀರಾ{(' ' + name) if name else ''}? ಯಾವ ಕೃಷಿ ಯೋಜನೆ ಬಗ್ಗೆ ತಿಳಿದುಕೊಳ್ಳಬೇಕು?"
+        return f"Namaste kaka, how are you{(' ' + name) if name else ''}? Which farming scheme can I help you with today?"
+
     def _speak(self, response: VoiceResponse | Gather, text: str, language: str, base_url: str) -> None:
-        """Prefer Sarvam audio when available, with Twilio Say as a safe fallback."""
+        """Use one voice only: Sarvam when available, Twilio Say otherwise."""
         if self.text_to_speech_fn and self.sarvam_key:
             try:
                 audio = self.text_to_speech_fn(text, self._language_code(language), self.sarvam_key)
@@ -66,13 +79,23 @@ class TwilioTransport:
                 if len(self.audio) > 100:
                     self.audio.pop(next(iter(self.audio)))
                 response.play(f"{base_url}/twilio/audio/{token}")
-                # Twilio continues to the next verb if Play cannot retrieve the
-                # media, so keep a spoken safety net in the same TwiML response.
-                response.say(text, language=self._language_code(language), voice="alice")
                 return
             except Exception:
                 pass
         response.say(text, language=self._language_code(language), voice="alice")
+
+    @staticmethod
+    def _thinking_message(language: str) -> str:
+        code = (language or "").casefold()
+        if code.startswith("te"):
+            return "ఒక్క నిమిషం, ఆలోచిస్తున్నాను. దయచేసి వేచి ఉండండి."
+        if code.startswith("hi"):
+            return "एक मिनट, मैं जानकारी देख रहा हूँ। कृपया इंतज़ार कीजिए।"
+        if code.startswith("ta"):
+            return "ஒரு நிமிடம், தகவலைப் பார்க்கிறேன். தயவுசெய்து காத்திருக்கவும்."
+        if code.startswith("kn"):
+            return "ಒಂದು ನಿಮಿಷ, ಮಾಹಿತಿಯನ್ನು ಪರಿಶೀಲಿಸುತ್ತಿದ್ದೇನೆ. ದಯವಿಟ್ಟು ಕಾಯಿರಿ."
+        return "One moment, I am checking the official information. Please wait."
 
     def _gather(self, response: VoiceResponse, text: str, base_url: str, language: str = "en-IN") -> None:
         language = self._language_code(language)
@@ -99,10 +122,7 @@ class TwilioTransport:
             response.hangup()
             return str(response)
         self.sessions[call_id] = (farmer.id, conversation)
-        if returning:
-            greeting = f"Welcome back {farmer.name or 'farmer'}. What farming scheme or subsidy can I help you with today?"
-        else:
-            greeting = "Namaskaram. I have created your farmer profile. What government scheme or subsidy do you need help with?"
+        greeting = self._quirky_greeting(conversation.language_code, farmer.name) if returning else "Namaskaram kaka. What farming scheme or subsidy do you need help with today?"
         self._gather(response, greeting, self._base_url(), conversation.language_code or "en-IN")
         return str(response)
 
@@ -138,6 +158,11 @@ class TwilioTransport:
         )
         response = VoiceResponse()
         answer = outcome.response_text or outcome.error_message or "Please try your question again."
+        response.say(
+            self._thinking_message(conversation.language_code or "en-IN"),
+            language=self._language_code(conversation.language_code or "en-IN"),
+            voice="alice",
+        )
         if conversation.result.goodbye_detected:
             self._speak(response, answer, conversation.language_code or "en-IN", self._base_url())
             try:
@@ -151,12 +176,25 @@ class TwilioTransport:
             self.processed_requests[request_key] = (result, time.monotonic() + 600)
             return result
 
+        if conversation.result.conversation_complete:
+            self._speak(response, answer, conversation.language_code or "en-IN", self._base_url())
+            try:
+                self.conversation_service.persist_summary(farmer_id, conversation, self.gemini_key)
+                self.conversation_service.conversations.save(conversation, farmer_id)
+            except Exception:
+                logger.exception("Unable to persist completed Twilio conversation state")
+            response.hangup()
+            self.sessions.pop(call_id, None)
+            result = str(response)
+            self.processed_requests[request_key] = (result, time.monotonic() + 600)
+            return result
+
         conversation.set_state("LISTENING")
         try:
             self.conversation_service.conversations.save(conversation, farmer_id)
         except Exception:
             logger.exception("Unable to persist Twilio listening state")
-        self._gather(response, f"{answer} Do you have another question?", self._base_url(), conversation.language_code or "en-IN")
+        self._gather(response, answer, self._base_url(), conversation.language_code or "en-IN")
         result = str(response)
         self.processed_requests[request_key] = (result, time.monotonic() + 600)
         if len(self.processed_requests) > 500:

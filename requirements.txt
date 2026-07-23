@@ -4,5 +4,7 @@ google-genai==1.25.0
 tavily-python==0.7.2
 firecrawl-py==2.5.4
 flask>=3.0.0
+flask-sock>=0.7.0
+simple-websocket>=1.1.0
 twilio>=9.0.0
 psycopg[binary]>=3.2.0

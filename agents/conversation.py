@@ -84,6 +84,15 @@ def _history(state: ConversationState) -> str:
     return "\n".join(f"{turn['role']}: {turn['text']}" for turn in state.turns[-12:])
 
 
+def _name_was_explicitly_provided(name: str, state: ConversationState, memory_context: str) -> bool:
+    """Reject names the model invents instead of extracting from farmer input."""
+    parts = [part.casefold() for part in str(name or "").split() if len(part.strip()) > 1]
+    if not parts:
+        return False
+    known_text = f"{_history(state)}\n{memory_context}".casefold()
+    return all(part in known_text for part in parts)
+
+
 def _tool_declarations() -> list[types.Tool]:
     return [
         types.Tool(function_declarations=[
@@ -247,11 +256,14 @@ def run_conversation(
             calls = [part.function_call for part in parts if part.function_call]
             if not calls:
                 result = AgentResult.from_dict(_parse(response.text or "", detected), detected)
+                if result.name and not _name_was_explicitly_provided(result.name, state, memory_context):
+                    result.name = ""
                 result = _finalize_result(result, state)
                 result = _merge_scheme_record(result, knowledge_service)
                 state.farmer_profile.update({
                     "language": result.language or detected,
                     "name": result.name,
+                    "mobile_number": result.mobile_number,
                     "state": result.state,
                     "district": result.district,
                     "village": result.village,

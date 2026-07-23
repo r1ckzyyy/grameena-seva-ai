@@ -20,6 +20,18 @@ services:
         sync: false
       - key: TWILIO_PHONE_NUMBER
         sync: false
+      - key: EXOTEL_ACCOUNT_SID
+        sync: false
+      - key: EXOTEL_API_KEY
+        sync: false
+      - key: EXOTEL_API_TOKEN
+        sync: false
+      - key: EXOTEL_EXOPHONE
+        sync: false
+      - key: EXOTEL_APP_ID
+        value: "1298353"
+      - key: EXOTEL_REGION
+        value: singapore
       - key: GRAMEEN_SEVA_DB_PATH
         value: data/grameen_seva.sqlite3
       - key: DATABASE_URL

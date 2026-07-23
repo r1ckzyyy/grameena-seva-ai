@@ -108,6 +108,10 @@ class FarmerProfileService:
         result = conversation.result
         if result.name:
             farmer.name = result.name
+        if result.mobile_number:
+            normalized_phone = normalize_phone(result.mobile_number)
+            if normalized_phone:
+                farmer.phone = normalized_phone
         if result.state:
             farmer.state = result.state
         if result.district:

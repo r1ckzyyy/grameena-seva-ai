@@ -52,6 +52,13 @@ def twilio_configured() -> bool:
     ))
 
 
+def exotel_configured() -> bool:
+    """Return whether the Exotel Voicebot transport has its required settings."""
+    return all(secret(key) for key in (
+        "EXOTEL_ACCOUNT_SID", "EXOTEL_API_KEY", "EXOTEL_API_TOKEN", "EXOTEL_EXOPHONE"
+    ))
+
+
 def twilio_public_base_url() -> str:
     """Return the externally reachable HTTPS base URL for Twilio callbacks."""
     return (

@@ -87,6 +87,14 @@ class ConversationService:
         conversation.farmer_id = farmer.id
         return farmer, conversation, True
 
+    def bind_phone_identity(self, conversation: ConversationState, current_farmer_id: str, phone: str) -> tuple[str, bool]:
+        """Attach an anonymous browser chat to the farmer's spoken phone identity."""
+        farmer, _, returning = self.load_or_create_farmer(phone)
+        conversation.farmer_id = farmer.id
+        self.farmer_profiles.sync_from_conversation(farmer.id, conversation)
+        self.conversations.save(conversation, farmer.id)
+        return farmer.id, returning
+
     def _apply_eligibility(self, farmer_id: str, conversation: ConversationState) -> None:
         farmer = self.farmer_profiles.get(farmer_id)
         if farmer is None:

@@ -23,6 +23,7 @@ CONVERSATION_STATES = (
 class AgentResult:
     language: str = ""
     name: str = ""
+    mobile_number: str = ""
     state: str = ""
     district: str = ""
     village: str = ""
@@ -69,6 +70,7 @@ class AgentResult:
         return cls(
             language=str(data.get("language") or language),
             name=str(data.get("name") or ""),
+            mobile_number=str(data.get("mobile_number") or ""),
             state=str(data.get("state") or ""),
             district=str(data.get("district") or ""),
             village=str(data.get("village") or ""),
