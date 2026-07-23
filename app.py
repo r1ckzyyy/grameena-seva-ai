@@ -9,6 +9,7 @@ import streamlit as st
 from config.settings import database_path, knowledge_cache_ttl_seconds, required_secrets, secret
 from models.conversation import ConversationState
 from repositories import create_repositories
+from repositories.farmers import normalize_spoken_phone
 from services.conversation import ConversationService
 from services.eligibility import EligibilityService
 from services.farmer_profile import FarmerProfileService
@@ -40,6 +41,7 @@ def init_state() -> None:
         "last_played_tts_token": -1,
         "last_audio_hash": "",
         "recorder_reset_token": 0,
+        "phone_audio_hash": "",
         "error_message": "",
     }
     for key, value in defaults.items():
@@ -190,18 +192,30 @@ def reset_farmer() -> None:
 
 
 def render_onboarding() -> None:
-    """Identify the farmer before exposing voice or text conversation controls."""
+    """Identify the farmer through the microphone before starting the conversation."""
     st.markdown("### Namaskaram kaka! 😊")
-    st.write("Mee mobile number cheppandi. Mee details retrieve chesi mana last conversation nunchi continue chestha.")
-    with st.form("farmer_onboarding"):
-        phone = st.text_input("Mobile number", placeholder="10-digit mobile number", type="tel")
-        submitted = st.form_submit_button("Continue")
-    if not submitted:
+    st.write("Tap the microphone and say your 10-digit mobile number slowly, one digit at a time.")
+    audio = st.audio_input("Speak your mobile number", key=f"phone_audio_{st.session_state.recorder_reset_token}")
+    if audio is None:
+        return
+    audio_bytes = audio.getvalue()
+    audio_hash = str(hash(audio_bytes))
+    if audio_hash == st.session_state.phone_audio_hash:
+        return
+    st.session_state.phone_audio_hash = audio_hash
+    try:
+        transcript, _ = transcribe(audio_bytes, secret("SARVAM_API_KEY"))
+        phone = normalize_spoken_phone(transcript)
+    except Exception:
+        st.warning("I could not hear the number clearly. Please tap the microphone and try again.")
+        return
+    if not phone:
+        st.warning("I could not recognize a valid 10-digit number. Please say each digit slowly and try again.")
         return
     try:
         farmer, conversation, returning = st.session_state.conversation_service.load_or_create_farmer(phone)
     except ValueError as exc:
-        st.error(str(exc))
+        st.warning(str(exc))
         return
     st.session_state.farmer_id = farmer.id
     st.session_state.conversation = conversation
@@ -216,6 +230,15 @@ def render_onboarding() -> None:
             "Namaskaram! Your farmer profile is ready. Tell me what farming support you need, "
             "and I will remember the details for next time."
         )
+    try:
+        st.session_state.tts_audio = text_to_speech(
+            st.session_state.onboarding_message,
+            conversation.language_code or "en-IN",
+            secret("SARVAM_API_KEY"),
+        )
+        st.session_state.tts_token += 1
+    except Exception:
+        st.session_state.tts_audio = None
     st.rerun()
 
 
@@ -250,24 +273,16 @@ missing = [key for key in required_secrets() if not secret(key)]
 if missing:
     st.info("Add the required API keys before using the assistant: " + ", ".join(missing))
 
-if not conversation.result.conversation_complete:
-    if not missing:
-        st.markdown("### Voice conversation")
-        audio = st.audio_input("Record your question", key=f"farmer_audio_{st.session_state.recorder_reset_token}")
-        if audio is not None:
-            audio_bytes = audio.getvalue()
-            audio_hash = str(hash(audio_bytes))
-            if audio_hash != st.session_state.last_audio_hash:
-                st.session_state.last_audio_hash = audio_hash
-                process_audio(audio_bytes)
-                st.rerun()
-    st.markdown("### Optional text input")
-    with st.form("text_question"):
-        text = st.text_input("Ask about a farming scheme or subsidy")
-        submitted = st.form_submit_button("Ask")
-    if submitted and text.strip():
-        process_text(text.strip())
-        st.rerun()
+if not conversation.result.conversation_complete and not missing:
+    st.markdown("### Voice conversation")
+    audio = st.audio_input("Speak your farming question", key=f"farmer_audio_{st.session_state.recorder_reset_token}")
+    if audio is not None:
+        audio_bytes = audio.getvalue()
+        audio_hash = str(hash(audio_bytes))
+        if audio_hash != st.session_state.last_audio_hash:
+            st.session_state.last_audio_hash = audio_hash
+            process_audio(audio_bytes)
+            st.rerun()
 
 if st.session_state.error_message:
     st.warning(st.session_state.error_message)

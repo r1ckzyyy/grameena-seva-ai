@@ -7,7 +7,7 @@ from pathlib import Path
 from models.conversation import AgentResult, ConversationState
 from repositories.conversations import ConversationRepository
 from repositories.database import SQLiteDatabase
-from repositories.farmers import FarmerRepository, normalize_phone
+from repositories.farmers import FarmerRepository, normalize_phone, normalize_spoken_phone
 from repositories.models import FarmerRecord
 
 
@@ -16,6 +16,12 @@ class CoreRegressionTests(unittest.TestCase):
         self.assertEqual(normalize_phone("+91 98765-43210"), "9876543210")
         self.assertEqual(normalize_phone("9876543210"), "9876543210")
         self.assertEqual(normalize_phone("123"), "")
+
+    def test_spoken_phone_normalization_supports_digits_and_words(self):
+        self.assertEqual(normalize_spoken_phone("9876543210"), "9876543210")
+        self.assertEqual(normalize_spoken_phone("nine eight seven six five four three two one zero"), "9876543210")
+        self.assertEqual(normalize_spoken_phone("नौ आठ सात छह पाँच चार तीन दो एक शून्य"), "9876543210")
+        self.assertEqual(normalize_spoken_phone("one two three"), "")
 
     def test_phone_lookup_uses_one_identity_for_formatted_input(self):
         with tempfile.TemporaryDirectory() as directory:

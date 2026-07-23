@@ -31,6 +31,11 @@ def database_path() -> Path:
     return Path(configured) if configured else Path("data") / "grameen_seva.sqlite3"
 
 
+def database_url() -> str:
+    """Return the optional shared PostgreSQL URL for multi-service hosting."""
+    return os.environ.get("DATABASE_URL", "") or secret("DATABASE_URL")
+
+
 def knowledge_cache_ttl_seconds() -> int:
     """Return the configured knowledge-cache lifetime, defaulting to seven days."""
     configured = os.environ.get("KNOWLEDGE_CACHE_TTL_SECONDS", "") or secret("KNOWLEDGE_CACHE_TTL_SECONDS")

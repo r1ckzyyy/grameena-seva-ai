@@ -28,9 +28,9 @@ The SQLite database defaults to `data/grameen_seva.sqlite3`. Set `GRAMEEN_SEVA_D
 
 ## Application flow
 
-1. Enter the farmer's mobile number. The normalized number is the cross-platform farmer identity.
+1. Speak the farmer's mobile number into the microphone. The spoken number is normalized into the cross-platform farmer identity.
 2. An existing farmer profile and conversation are resumed, or a new phone-linked profile is created.
-3. Ask a subsidy or scheme question by voice or text.
+3. Ask a subsidy or scheme question by voice. The Streamlit app does not require typing.
 4. The conversation service gathers only the missing farmer details and saves them after each turn.
 5. Knowledge service searches and caches official Indian government sources.
 6. The assistant presents the suggested scheme, eligibility result, confidence, and official source.
@@ -41,7 +41,9 @@ The repository boundary is SQLite-backed and can be initialized independently wi
 
 Streamlit and Twilio are separate entry points. Streamlit Cloud runs `app.py` through Streamlit's server; it does not run or expose the Flask routes created by `create_twilio_app()` in `twilio_server.py`. Therefore the complete application cannot run on Streamlit Community Cloud alone. The minimum additional component is one small HTTPS Python service running `twilio_server.py`.
 
-Both entry points construct the same `ConversationService` and use the same SQLite schema and business services. No second conversation engine is required.
+Both entry points construct the same `ConversationService` and use the same schema and business services. No second conversation engine is required.
+
+For local testing, both processes can use the same SQLite file by setting the same `GRAMEEN_SEVA_DB_PATH`. For separate hosted services, do not use a local SQLite path: configure the same PostgreSQL `DATABASE_URL` in the Render Twilio service and in Streamlit secrets. This is what makes a query made by phone and a query made in the app resolve to the same farmer memory and conversation history.
 
 ## Optional Twilio voice server
 
@@ -84,28 +86,30 @@ Expose the server through HTTPS, then configure the Twilio phone number's incomi
    FIRECRAWL_API_KEY = "..."
    KNOWLEDGE_CACHE_TTL_SECONDS = "604800"
    GRAMEEN_SEVA_DB_PATH = "data/grameen_seva.sqlite3"
+   DATABASE_URL = "postgresql://...same Render database connection string..."
    ```
 
 6. Deploy and open the Streamlit URL. The app creates its SQLite directory and schema automatically.
 
-For a live demo, treat Streamlit Cloud SQLite storage as runtime storage; farmer memory remains available while that app instance and its writable storage remain available. The Twilio server should use the same configured database path only when both processes share a filesystem. If they do not share a filesystem, run both interfaces against the same local/service host instead of splitting them across unrelated storage volumes.
+For a live demo, use PostgreSQL through `DATABASE_URL` for both interfaces. SQLite remains useful for local development or a single host, but Streamlit Cloud and Render do not share a filesystem.
 
 ## Standalone Twilio deployment
 
-1. In Render, choose **New → Blueprint** and select the GitHub repository. The included `render.yaml` sets the build command, start command, port behavior, and non-secret defaults.
+1. In Render, choose **New → Blueprint** and select your GitHub repository. The included `render.yaml` creates the Twilio web service and a Render Postgres database.
 2. In the Render service environment settings, provide the four AI keys plus:
 
    ```text
    TWILIO_ACCOUNT_SID
    TWILIO_AUTH_TOKEN
    TWILIO_PHONE_NUMBER
-   GRAMEEN_SEVA_DB_PATH=data/grameen_seva.sqlite3
    ```
 
-3. Render automatically supplies the public URL through `RENDER_EXTERNAL_URL`; no manual public URL value is needed. If deploying elsewhere, set `TWILIO_PUBLIC_BASE_URL` to the service's HTTPS base URL.
-4. The Blueprint starts the service with `python twilio_server.py`.
-5. Configure the Twilio number's incoming voice webhook to `POST https://YOUR-SERVICE.onrender.com/twilio/voice` and status callback to `POST https://YOUR-SERVICE.onrender.com/twilio/status`.
-6. Confirm the service is reachable over HTTPS, then place a test call.
+3. Leave the generated `DATABASE_URL` environment variable connected to the `grameen-seva-db` database. Render supports this `fromDatabase` Blueprint reference and supplies the connection string automatically. The app initializes its tables on startup.
+4. Render automatically supplies the public URL through `RENDER_EXTERNAL_URL`; no manual public URL value is needed. If deploying elsewhere, set `TWILIO_PUBLIC_BASE_URL` to the service's HTTPS base URL.
+5. The Blueprint starts the service with `python twilio_server.py`.
+6. Configure the Twilio number's incoming voice webhook to `POST https://YOUR-SERVICE.onrender.com/twilio/voice` and status callback to `POST https://YOUR-SERVICE.onrender.com/twilio/status`.
+7. Copy the Render Postgres **external** connection string into Streamlit Cloud secrets as `DATABASE_URL`. Do not copy the local SQLite path as the production database setting.
+8. Confirm the service is reachable over HTTPS, open the Streamlit app, and place a test call using the same phone number. Both should see the same farmer profile and conversation memory.
 
 The server honors the hosting platform's `PORT` variable automatically; set `TWILIO_PORT` only when you need a custom port.
 

@@ -5,3 +5,4 @@ tavily-python==0.7.2
 firecrawl-py==2.5.4
 flask>=3.0.0
 twilio>=9.0.0
+psycopg[binary]>=3.2.0

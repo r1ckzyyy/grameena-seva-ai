@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 from datetime import datetime, timezone
 
 from repositories.database import SQLiteDatabase
@@ -23,6 +24,40 @@ def normalize_phone(phone: str) -> str:
     if digits.startswith("91") and len(digits) == 12:
         digits = digits[2:]
     return digits if len(digits) == 10 else ""
+
+
+_SPOKEN_DIGITS = {
+    "zero": "0", "oh": "0", "o": "0",
+    "one": "1", "two": "2", "three": "3", "four": "4", "five": "5",
+    "six": "6", "seven": "7", "eight": "8", "nine": "9",
+    # Common Hindi forms, which Sarvam may preserve in a Hindi transcript.
+    "शून्य": "0", "जीरो": "0", "एक": "1", "दो": "2", "तीन": "3", "चार": "4",
+    "पांच": "5", "पाँच": "5", "छह": "6", "छः": "6", "सात": "7", "आठ": "8", "नौ": "9",
+}
+
+
+def normalize_spoken_phone(transcript: str) -> str:
+    """Extract a ten-digit Indian mobile identity from spoken-number text.
+
+    Sarvam commonly returns either digits or English number words. The caller
+    identity path still uses ``normalize_phone``; this helper is for browser
+    microphone onboarding only.
+    """
+    text = str(transcript or "").strip().lower()
+    direct = normalize_phone(text)
+    if direct:
+        return direct
+    tokens = re.findall(r"[\u0900-\u097f]+|[a-z]+|\d", text)
+    digits: list[str] = []
+    for token in tokens:
+        if token in _SPOKEN_DIGITS:
+            digits.append(_SPOKEN_DIGITS[token])
+        elif token.isdigit():
+            digits.append(token)
+    candidate = "".join(digits)
+    if candidate.startswith("91") and len(candidate) == 12:
+        candidate = candidate[2:]
+    return candidate if len(candidate) == 10 else ""
 
 
 class FarmerRepository:

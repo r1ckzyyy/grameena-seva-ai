@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import sqlite3
 import logging
+import os
+import re
 from contextlib import contextmanager
 from typing import Iterator
 from pathlib import Path
@@ -89,6 +91,99 @@ CREATE INDEX IF NOT EXISTS idx_research_cache_expiry
 """
 
 logger = logging.getLogger("grameen_seva.database")
+
+
+class PostgresConnection:
+    """Small compatibility wrapper for the repository layer's SQLite-style SQL."""
+
+    def __init__(self, connection) -> None:
+        self.connection = connection
+
+    @staticmethod
+    def _sql(statement: str) -> str:
+        return re.sub(r"\?", "%s", statement)
+
+    def execute(self, statement: str, parameters=()):
+        return self.connection.execute(self._sql(statement), parameters)
+
+    def executemany(self, statement: str, parameters):
+        return self.connection.executemany(self._sql(statement), parameters)
+
+
+class PostgresDatabase:
+    """PostgreSQL backend used when DATABASE_URL is configured for shared hosting."""
+
+    def __init__(self, url: str) -> None:
+        try:
+            import psycopg
+            from psycopg.rows import dict_row
+        except ImportError as exc:
+            raise RuntimeError("Install psycopg[binary] to use DATABASE_URL.") from exc
+        self._psycopg = psycopg
+        self._dict_row = dict_row
+        self.url = url
+        self.initialize()
+
+    @contextmanager
+    def connect(self) -> Iterator[PostgresConnection]:
+        connection = self._psycopg.connect(self.url, row_factory=self._dict_row)
+        try:
+            yield PostgresConnection(connection)
+            connection.commit()
+        except Exception:
+            connection.rollback()
+            raise
+        finally:
+            connection.close()
+
+    def initialize(self) -> None:
+        schema = SCHEMA.replace("INTEGER PRIMARY KEY AUTOINCREMENT", "BIGSERIAL PRIMARY KEY")
+        with self.connect() as connection:
+            for statement in schema.split(";"):
+                if statement.strip():
+                    connection.execute(statement)
+            self._migrate_columns(connection, "farmers", {
+                "phone_normalized": "TEXT NOT NULL DEFAULT ''",
+                "eligible_schemes": "TEXT NOT NULL DEFAULT '[]'",
+                "recommendations": "TEXT NOT NULL DEFAULT '[]'",
+                "conversation_summaries": "TEXT NOT NULL DEFAULT '[]'",
+            })
+            self._migrate_columns(connection, "conversations", {"snapshot": "TEXT NOT NULL DEFAULT ''"})
+            self._migrate_columns(connection, "research_cache", {
+                "intent": "TEXT NOT NULL DEFAULT ''",
+                "scheme_name": "TEXT NOT NULL DEFAULT ''",
+                "confidence": "REAL NOT NULL DEFAULT 0",
+            })
+            self._migrate_columns(connection, "schemes", {
+                "confidence": "REAL NOT NULL DEFAULT 0",
+                "required_documents": "TEXT NOT NULL DEFAULT '[]'",
+                "application_process": "TEXT NOT NULL DEFAULT ''",
+            })
+            connection.execute("CREATE INDEX IF NOT EXISTS idx_farmers_phone_normalized ON farmers(phone_normalized) WHERE phone_normalized != ''")
+            connection.execute("CREATE UNIQUE INDEX IF NOT EXISTS uq_farmers_phone_normalized ON farmers(phone_normalized) WHERE phone_normalized != ''")
+
+    @staticmethod
+    def _migrate_columns(connection: PostgresConnection, table: str, columns_to_add: dict[str, str]) -> None:
+        rows = connection.execute(
+            "SELECT column_name AS name FROM information_schema.columns WHERE table_name = ?",
+            (table,),
+        ).fetchall()
+        existing = {row["name"] for row in rows}
+        for column, definition in columns_to_add.items():
+            if column not in existing:
+                connection.execute(f"ALTER TABLE {table} ADD COLUMN {column} {definition}")
+
+
+def create_database(path: str | Path, url: str = "") -> SQLiteDatabase | PostgresDatabase:
+    """Create the configured shared database backend.
+
+    DATABASE_URL takes precedence so Streamlit and Twilio can use the same
+    Render PostgreSQL database. Without it, the original SQLite path remains.
+    """
+    database_url = (url or os.environ.get("DATABASE_URL", "")).strip()
+    if database_url:
+        return PostgresDatabase(database_url)
+    return SQLiteDatabase(path)
 
 
 class SQLiteDatabase:
