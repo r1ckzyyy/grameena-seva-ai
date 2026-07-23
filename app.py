@@ -43,6 +43,7 @@ def init_state() -> None:
         "last_played_tts_token": -1,
         "last_component_event_id": None,
         "recorder_reset_token": 0,
+        "recorder_fallback": False,
         "last_audio_hash": "",
         "error_message": "",
         "form_data": {},
@@ -420,14 +421,24 @@ if conversation.result.conversation_complete:
             st.session_state.pop(key, None)
         st.rerun()
 
-audio = autonomous_recorder(
-    active=not conversation.result.conversation_complete and not missing,
-    auto_start=False,
-    tts_audio=None,
-    tts_token=st.session_state.tts_token,
-    resume_after_tts=False,
-    reset_token=st.session_state.recorder_reset_token,
-)
+audio = None
+if st.session_state.recorder_fallback:
+    st.warning("The browser microphone was blocked. Use the recorder below, or allow microphone access and try again.")
+    if st.button("Try the large microphone again", key="retry_custom_mic", use_container_width=True):
+        st.session_state.recorder_fallback = False
+        st.session_state.error_message = ""
+        st.session_state.recorder_reset_token += 1
+        st.rerun()
+    audio = st.audio_input("Tap to record your question", key="fallback_mic")
+else:
+    audio = autonomous_recorder(
+        active=not conversation.result.conversation_complete and not missing,
+        auto_start=False,
+        tts_audio=None,
+        tts_token=st.session_state.tts_token,
+        resume_after_tts=False,
+        reset_token=st.session_state.recorder_reset_token,
+    )
 
 # A component event is consumed once; this prevents duplicate STT/Gemini calls on reruns.
 audio_bytes: bytes | None = None
@@ -438,6 +449,8 @@ if isinstance(audio, dict):
         st.session_state.last_component_event_id = event_id
         if audio.get("event") == "error":
             st.session_state.error_message = audio.get("message", "Microphone permission is required.")
+            st.session_state.recorder_fallback = True
+            st.rerun()
         elif audio.get("event") == "audio" and audio.get("audio"):
             try:
                 audio_bytes = base64.b64decode(audio["audio"])

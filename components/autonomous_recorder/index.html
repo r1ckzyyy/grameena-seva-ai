@@ -82,6 +82,12 @@
     async function beginListening() {
       if (!args.active || stream) return;
       try {
+        if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+          throw new Error("Microphone access is unavailable. Open the app over HTTPS in Chrome or Edge.");
+        }
+        if (!window.MediaRecorder) {
+          throw new Error("This browser does not support audio recording. Please use Chrome or Edge.");
+        }
         stream = await navigator.mediaDevices.getUserMedia({audio: true});
         chunks = [];
         recorder = new MediaRecorder(stream);
@@ -103,7 +109,10 @@
         send({event: "listening", id: Date.now()});
       } catch (error) {
         setUIState("idle");
-        send({event: "error", message: String(error)});
+        const message = error && error.name === "NotAllowedError"
+          ? "Microphone permission was denied. Allow microphone access for this site and try again."
+          : String(error && error.message ? error.message : error);
+        send({event: "error", message});
       }
     }
     function stopListening() {
