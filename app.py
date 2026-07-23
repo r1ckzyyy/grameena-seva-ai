@@ -171,33 +171,37 @@ def process_text(text: str) -> None:
     st.session_state.error_message = outcome.error_message
 
 
-def speak(text: str, language: str = "en-IN") -> None:
+def speak(text: str, language: str = "en-IN") -> bool:
     try:
         audio = text_to_speech(text, language, secret("SARVAM_API_KEY"))
     except Exception:
-        return
+        return False
     st.session_state.tts_audio = audio
     st.session_state.tts_token += 1
+    return True
 
 
-def process_identity_audio(audio_bytes: bytes) -> None:
+def process_identity_audio(audio_bytes: bytes, status=None) -> bool:
     """Resolve the farmer from the first spoken turn before normal chat begins."""
+    if status:
+        status.write("Converting your voice to text…")
     try:
         transcript, detected_language = transcribe(audio_bytes, secret("SARVAM_API_KEY"))
     except Exception:
-        return
+        return False
     phone = normalize_spoken_phone(transcript)
     if not phone:
         conversation: ConversationState = st.session_state.conversation
         conversation.add_turn("farmer", transcript or "")
         response = "Please tell me your 10-digit mobile number first, one digit at a time."
         conversation.add_turn("assistant", response)
-        speak(response, detected_language or "en-IN")
-        return
+        return speak(response, detected_language or "en-IN")
+    if status:
+        status.write("Finding your farmer profile and saved memory…")
     try:
         farmer, conversation, returning = st.session_state.conversation_service.load_or_create_farmer(phone)
     except ValueError:
-        return
+        return False
     st.session_state.farmer_id = farmer.id
     st.session_state.conversation = conversation
     st.session_state.identity_pending = False
@@ -206,15 +210,18 @@ def process_identity_audio(audio_bytes: bytes) -> None:
     else:
         response = "Namaskaram. Your farmer profile is ready. Tell me what farming support you need."
         conversation.add_turn("assistant", response)
-    speak(response, conversation.language_code or detected_language or "en-IN")
+    return speak(response, conversation.language_code or detected_language or "en-IN")
 
 
-def process_audio(audio_bytes: bytes) -> None:
+def process_audio(audio_bytes: bytes, status=None) -> bool:
     st.session_state.error_message = ""
     st.session_state.recorder_reset_token += 1
     if st.session_state.identity_pending:
-        process_identity_audio(audio_bytes)
-        return
+        return process_identity_audio(audio_bytes, status)
+    if status:
+        status.write("Converting your voice to text…")
+        status.write("Understanding your farming question…")
+        status.write("Checking official government scheme information…")
     outcome = st.session_state.conversation_service.process_audio(
         audio_bytes,
         st.session_state.conversation,
@@ -228,10 +235,14 @@ def process_audio(audio_bytes: bytes) -> None:
     )
     if not outcome.success:
         st.session_state.error_message = outcome.error_message
-        return
+        return False
     if outcome.audio:
         st.session_state.tts_audio = outcome.audio
         st.session_state.tts_token += 1
+        if status:
+            status.write("Preparing the spoken reply…")
+        return True
+    return False
 
 
 def reset_farmer() -> None:
@@ -304,7 +315,13 @@ if not conversation.result.conversation_complete:
         audio_hash = str(hash(audio_bytes))
         if audio_hash != st.session_state.last_audio_hash:
             st.session_state.last_audio_hash = audio_hash
-            process_audio(audio_bytes)
+            with st.status("Processing your voice…", expanded=True) as status:
+                success = process_audio(audio_bytes, status)
+                status.update(
+                    label="Reply ready" if success else "Please try speaking again",
+                    state="complete" if success else "error",
+                    expanded=False,
+                )
             st.rerun()
 
 if st.session_state.tts_audio:
