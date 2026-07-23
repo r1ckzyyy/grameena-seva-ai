@@ -3,6 +3,5 @@ sarvamai==0.1.19
 google-genai==1.25.0
 tavily-python==0.7.2
 firecrawl-py==2.5.4
-requests==2.32.3
-qrcode[pil]==8.0
-google-generativeai>=0.8.0
+flask>=3.0.0
+twilio>=9.0.0

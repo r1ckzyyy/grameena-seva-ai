@@ -30,3 +30,7 @@ Thumbs.db
 
 # Streamlit cache
 .streamlit/cache/
+
+# Local SQLite runtime data
+data/*.sqlite3
+data/*.sqlite3-*
