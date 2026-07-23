@@ -2,19 +2,18 @@
 
 from __future__ import annotations
 
-import base64
 import html
 import json
 import re
 import smtplib
 from email.message import EmailMessage
+from typing import Any
 
 import streamlit as st
 from google.genai import types
 
 from agents.conversation import GEMINI_MODEL, _gemini_client, _localized_fallback, run_conversation
 from models.conversation import ConversationState
-from services.recorder import autonomous_recorder
 from services.sarvam import text_to_speech, transcribe
 
 
@@ -41,9 +40,6 @@ def init_state() -> None:
         "tts_audio": None,
         "tts_token": 0,
         "last_played_tts_token": -1,
-        "last_component_event_id": None,
-        "recorder_reset_token": 0,
-        "recorder_fallback": False,
         "last_audio_hash": "",
         "error_message": "",
         "form_data": {},
@@ -53,6 +49,8 @@ def init_state() -> None:
         "email_draft": "",
         "claim_intent": "undecided",
         "email_sent": False,
+        "recorder_reset_token": 0,
+        "uploaded_docs_data": {},
     }
     for key, value in defaults.items():
         st.session_state.setdefault(key, value)
@@ -125,14 +123,16 @@ in the script shown on the form. Do not provide eligibility advice.
     return parse_json_object(response.text or "")
 
 
-def build_email_draft(form_data: dict[str, str], result: object, language_code: str) -> str:
+def build_email_draft(form_data: dict[str, str], result: object, language_code: str, uploaded_labels: list[str]) -> str:
+    attachments_str = ", ".join(uploaded_labels) if uploaded_labels else "None"
     prompt = f"""
 Draft a polite email to the appropriate Indian government agriculture office
 asking how to claim the subsidy. Do not claim that the farmer is eligible and
 do not invent facts, amounts, scheme names, or email addresses. Mention that
-the attached form is being submitted for guidance. Write the email in English
-unless the detected language is Telugu, Hindi, or Tamil, in which case write
-it in that language. Return only the email body, with a clear subject line.
+the attached form is being submitted for guidance. Also mention that the following
+required documents are attached: {attachments_str}.
+Write the email in English unless the detected language is Telugu, Hindi, or Tamil,
+in which case write it in that language. Return only the email body, with a clear subject line.
 
 Detected language: {language_code}
 Form details: {json.dumps(form_data, ensure_ascii=False)}
@@ -152,7 +152,7 @@ Conversation details: {json.dumps({
     return (response.text or "").strip()
 
 
-def send_claim_email(body: str, image_bytes: bytes | None, image_type: str) -> None:
+def send_claim_email(body: str, form_image_bytes: bytes | None, form_image_type: str, additional_attachments: list[dict[str, Any]] = None) -> None:
     """Send only after the farmer explicitly clicks the send button."""
     username = secret("SMTP_USERNAME")
     password = secret("SMTP_PASSWORD")
@@ -163,9 +163,16 @@ def send_claim_email(body: str, image_bytes: bytes | None, image_type: str) -> N
     message["To"] = "santhu.vibrant@gmail.com"
     message["Subject"] = "Request for help claiming an agricultural subsidy"
     message.set_content(body)
-    if image_bytes:
-        maintype, subtype = (image_type or "image/jpeg").split("/", 1)
-        message.add_attachment(image_bytes, maintype=maintype, subtype=subtype, filename="subsidy_form.jpg")
+    if form_image_bytes:
+        maintype, subtype = (form_image_type or "image/jpeg").split("/", 1)
+        message.add_attachment(form_image_bytes, maintype=maintype, subtype=subtype, filename="subsidy_form.jpg")
+    if additional_attachments:
+        for att in additional_attachments:
+            if att.get("bytes"):
+                filename = att.get("name") or "document.jpg"
+                mime_type = att.get("type") or "image/jpeg"
+                maintype, subtype = mime_type.split("/", 1)
+                message.add_attachment(att["bytes"], maintype=maintype, subtype=subtype, filename=filename)
     with smtplib.SMTP(secret("SMTP_HOST") or "smtp.gmail.com", int(secret("SMTP_PORT") or "587")) as server:
         server.starttls()
         server.login(username, password)
@@ -215,12 +222,41 @@ def render_form_assistant(conversation: ConversationState) -> None:
         with cols[index % 2]:
             form_data[key] = st.text_input(label, value=form_data.get(key, ""), key=f"form_{key}")
     st.session_state.form_data = form_data
+
+    # Dynamic document upload interface based on required documents
+    st.markdown("---")
+    st.markdown("#### Upload required documents")
+    st.caption("Provide clear photos or files of the following documents to attach to your claim:")
+    
+    required_docs = conversation.result.required_documents
+    if not required_docs:
+        required_docs = ["Aadhar Card Photo", "Land Documents Photo"]
+        
+    uploaded_files = []
+    for doc in required_docs:
+        doc_key = f"doc_upload_{doc.lower().replace(' ', '_')}"
+        uploaded_file = st.file_uploader(f"{doc}", type=["png", "jpg", "jpeg", "pdf"], key=doc_key)
+        if uploaded_file is not None:
+            uploaded_files.append({
+                "name": uploaded_file.name,
+                "bytes": uploaded_file.getvalue(),
+                "type": uploaded_file.type,
+                "label": doc
+            })
+
     if st.button("Draft email to government office", key="draft_email", use_container_width=True):
         try:
             with st.spinner("Drafting the email…"):
-                st.session_state.email_draft = build_email_draft(form_data, conversation.result, conversation.language_code)
-        except Exception:
-            st.error("The email draft could not be prepared. Please try again.")
+                uploaded_labels = [f["label"] for f in uploaded_files]
+                st.session_state.email_draft = build_email_draft(
+                    form_data, 
+                    conversation.result, 
+                    conversation.language_code,
+                    uploaded_labels
+                )
+        except Exception as exc:
+            st.error(f"The email draft could not be prepared: {exc}")
+            
     if st.session_state.email_draft:
         st.markdown("#### Email draft — review before sending")
         st.text_area("Draft", value=st.session_state.email_draft, height=300, key="email_preview")
@@ -231,6 +267,7 @@ def render_form_assistant(conversation: ConversationState) -> None:
                         st.session_state.get("email_preview", st.session_state.email_draft),
                         st.session_state.form_image_bytes,
                         st.session_state.form_image_type,
+                        uploaded_files
                     )
                 st.session_state.email_sent = True
             except Exception as exc:
@@ -249,7 +286,7 @@ def render_form_assistant(conversation: ConversationState) -> None:
 def handle_recording(audio_bytes: bytes) -> bool:
     conversation: ConversationState = st.session_state.conversation
     st.session_state.error_message = ""
-    # Force the browser component out of its previous "processing" state.
+    # Force the browser component out of its previous state.
     st.session_state.recorder_reset_token += 1
     conversation.set_state("PROCESSING")
 
@@ -380,7 +417,6 @@ def render_styles() -> None:
         .assistant-bubble {background:#fff;color:#1b1b1b;margin-right:8%;border:1px solid #dce7d8;box-shadow:0 8px 24px #2e7d3210;border-top-left-radius:5px;}
         .result-title {color:#0d631b;font:700 1.3rem Montserrat;margin-top:1.5rem;margin-bottom:.7rem;}
         div[data-testid="stMetric"] {background:#fff;border:1px solid #dce7d8;border-radius:16px;padding:1rem;}
-        div[data-testid="stCustomComponentV1"] {position:fixed!important;z-index:1000!important;left:50%!important;bottom:.25rem!important;transform:translateX(-50%)!important;width:320px!important;height:320px!important;background:transparent!important;}
         </style>
         """,
         unsafe_allow_html=True,
@@ -422,41 +458,17 @@ if conversation.result.conversation_complete:
         st.rerun()
 
 audio = None
-if st.session_state.recorder_fallback:
-    st.warning("The browser microphone was blocked. Use the recorder below, or allow microphone access and try again.")
-    if st.button("Try the large microphone again", key="retry_custom_mic", use_container_width=True):
-        st.session_state.recorder_fallback = False
-        st.session_state.error_message = ""
-        st.session_state.recorder_reset_token += 1
-        st.rerun()
-    audio = st.audio_input("Tap to record your question", key="fallback_mic")
-else:
-    audio = autonomous_recorder(
-        active=not conversation.result.conversation_complete and not missing,
-        auto_start=False,
-        tts_audio=None,
-        tts_token=st.session_state.tts_token,
-        resume_after_tts=False,
-        reset_token=st.session_state.recorder_reset_token,
+if not conversation.result.conversation_complete and not missing:
+    st.markdown("### Speak your question")
+    st.caption("Click the microphone to start speaking, and click it again to finish and send.")
+    # Key rotated dynamically to reset the widget to a fresh state after processing is complete.
+    audio = st.audio_input(
+        "Record your question", 
+        key=f"farmer_audio_{st.session_state.recorder_reset_token}"
     )
 
-# A component event is consumed once; this prevents duplicate STT/Gemini calls on reruns.
 audio_bytes: bytes | None = None
-if isinstance(audio, dict):
-    event_id = audio.get("id")
-    fresh = event_id is not None and event_id != st.session_state.last_component_event_id
-    if fresh:
-        st.session_state.last_component_event_id = event_id
-        if audio.get("event") == "error":
-            st.session_state.error_message = audio.get("message", "Microphone permission is required.")
-            st.session_state.recorder_fallback = True
-            st.rerun()
-        elif audio.get("event") == "audio" and audio.get("audio"):
-            try:
-                audio_bytes = base64.b64decode(audio["audio"])
-            except (ValueError, TypeError):
-                st.session_state.error_message = "The recording could not be read. Please try again."
-elif audio is not None:
+if audio is not None:
     try:
         audio_bytes = bytes(audio) if isinstance(audio, (bytes, bytearray)) else audio.getvalue()
     except (AttributeError, TypeError, ValueError):
@@ -467,7 +479,6 @@ if audio_bytes:
     if audio_hash != st.session_state.last_audio_hash:
         st.session_state.last_audio_hash = audio_hash
         handle_recording(audio_bytes)
-        # Re-render even when STT, Gemini, or TTS fails so the mic is usable again.
         st.rerun()
 
 if st.session_state.tts_audio and st.session_state.last_played_tts_token != st.session_state.tts_token:
