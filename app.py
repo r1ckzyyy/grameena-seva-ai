@@ -44,6 +44,8 @@ def init_state() -> None:
         "recorder_reset_token": 0,
         "phone_audio_hash": "",
         "error_message": "",
+        "processing_steps": [],
+        "processing_status": "",
     }
     for key, value in defaults.items():
         st.session_state.setdefault(key, value)
@@ -181,10 +183,15 @@ def speak(text: str, language: str = "en-IN") -> bool:
     return True
 
 
+def record_processing_step(message: str, status=None) -> None:
+    st.session_state.processing_steps.append(message)
+    if status:
+        status.write(message)
+
+
 def process_identity_audio(audio_bytes: bytes, status=None) -> bool:
     """Resolve the farmer from the first spoken turn before normal chat begins."""
-    if status:
-        status.write("Converting your voice to text…")
+    record_processing_step("Converting your voice to text…", status)
     try:
         transcript, detected_language = transcribe(audio_bytes, secret("SARVAM_API_KEY"))
     except Exception:
@@ -196,8 +203,7 @@ def process_identity_audio(audio_bytes: bytes, status=None) -> bool:
         response = "Please tell me your 10-digit mobile number first, one digit at a time."
         conversation.add_turn("assistant", response)
         return speak(response, detected_language or "en-IN")
-    if status:
-        status.write("Finding your farmer profile and saved memory…")
+    record_processing_step("Finding your farmer profile and saved memory…", status)
     try:
         farmer, conversation, returning = st.session_state.conversation_service.load_or_create_farmer(phone)
     except ValueError:
@@ -218,10 +224,9 @@ def process_audio(audio_bytes: bytes, status=None) -> bool:
     st.session_state.recorder_reset_token += 1
     if st.session_state.identity_pending:
         return process_identity_audio(audio_bytes, status)
-    if status:
-        status.write("Converting your voice to text…")
-        status.write("Understanding your farming question…")
-        status.write("Checking official government scheme information…")
+    record_processing_step("Converting your voice to text…", status)
+    record_processing_step("Understanding your farming question…", status)
+    record_processing_step("Checking official government scheme information…", status)
     outcome = st.session_state.conversation_service.process_audio(
         audio_bytes,
         st.session_state.conversation,
@@ -239,8 +244,7 @@ def process_audio(audio_bytes: bytes, status=None) -> bool:
     if outcome.audio:
         st.session_state.tts_audio = outcome.audio
         st.session_state.tts_token += 1
-        if status:
-            status.write("Preparing the spoken reply…")
+        record_processing_step("Preparing the spoken reply…", status)
         return True
     return False
 
@@ -315,14 +319,27 @@ if not conversation.result.conversation_complete:
         audio_hash = str(hash(audio_bytes))
         if audio_hash != st.session_state.last_audio_hash:
             st.session_state.last_audio_hash = audio_hash
+            st.session_state.processing_steps = ["Starting voice processing…"]
+            st.session_state.processing_status = "Processing your voice…"
             with st.status("Processing your voice…", expanded=True) as status:
                 success = process_audio(audio_bytes, status)
+                st.session_state.processing_status = "Reply ready" if success else "Please try speaking again"
                 status.update(
-                    label="Reply ready" if success else "Please try speaking again",
+                    label=st.session_state.processing_status,
                     state="complete" if success else "error",
-                    expanded=False,
+                    expanded=True,
                 )
             st.rerun()
+
+if st.session_state.processing_status:
+    with st.status(st.session_state.processing_status, expanded=True) as status:
+        for step in st.session_state.processing_steps:
+            status.write(step)
+        status.update(
+            label=st.session_state.processing_status,
+            state="complete" if st.session_state.processing_status == "Reply ready" else "error",
+            expanded=True,
+        )
 
 if st.session_state.tts_audio:
     autoplay = st.session_state.last_played_tts_token != st.session_state.tts_token
