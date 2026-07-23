@@ -46,6 +46,10 @@ def init_state() -> None:
     }
     for key, value in defaults.items():
         st.session_state.setdefault(key, value)
+    if st.session_state.farmer_id is None:
+        farmer_id = st.session_state.conversation_service.start_new_farmer()
+        st.session_state.farmer_id = farmer_id
+        st.session_state.conversation = ConversationState(farmer_id=farmer_id)
 
 
 def format_inr(amount: int) -> str:
@@ -242,10 +246,6 @@ init_state()
 render_styles()
 st.markdown('<div class="brand">🌾 Grameen Seva AI Hub</div>', unsafe_allow_html=True)
 st.markdown('<div class="subtitle">AI-powered government scheme and subsidy assistant for farmers</div>', unsafe_allow_html=True)
-
-if not st.session_state.farmer_id:
-    render_onboarding()
-    st.stop()
 
 conversation: ConversationState = st.session_state.conversation
 render_chat(conversation)
