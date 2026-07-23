@@ -194,7 +194,7 @@ def render_onboarding() -> None:
     st.markdown("### Namaskaram kaka! 😊")
     st.write("Mee mobile number cheppandi. Mee details retrieve chesi mana last conversation nunchi continue chestha.")
     with st.form("farmer_onboarding"):
-        phone = st.text_input("Mobile number", placeholder="10-digit mobile number", type="tel")
+        phone = st.text_input("Mobile number", placeholder="10-digit mobile number", type="default")
         submitted = st.form_submit_button("Continue")
     if not submitted:
         return
