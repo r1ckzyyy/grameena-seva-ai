@@ -103,7 +103,7 @@ def parse_json_object(text: str) -> dict[str, str]:
 def extract_form(image_bytes: bytes, mime_type: str) -> dict[str, str]:
     prompt = """
 You extract information from an Indian government agricultural subsidy form.
-Read only text that is visible in the image. Do not guess or fill missing values.
+Read only text that is visible in the image or PDF. Do not guess or fill missing values.
 Return only JSON with these keys:
 farmer_name, father_or_spouse_name, mobile_number, address, state, district,
 village, land_size, farmer_category, equipment_or_input, scheme_name,
@@ -160,12 +160,18 @@ def send_claim_email(body: str, form_image_bytes: bytes | None, form_image_type:
         raise RuntimeError("SMTP_USERNAME and SMTP_PASSWORD are missing from Streamlit secrets")
     message = EmailMessage()
     message["From"] = username
-    message["To"] = "santhu.vibrant@gmail.com"
+    message["To"] = "santoshdende@ewsattapur.com"
     message["Subject"] = "Request for help claiming an agricultural subsidy"
     message.set_content(body)
     if form_image_bytes:
-        maintype, subtype = (form_image_type or "image/jpeg").split("/", 1)
-        message.add_attachment(form_image_bytes, maintype=maintype, subtype=subtype, filename="subsidy_form.jpg")
+        mime_type = form_image_type or "image/jpeg"
+        maintype, subtype = mime_type.split("/", 1)
+        message.add_attachment(
+            form_image_bytes,
+            maintype=maintype,
+            subtype=subtype,
+            filename=_form_attachment_filename(mime_type),
+        )
     if additional_attachments:
         for att in additional_attachments:
             if att.get("bytes"):
@@ -179,26 +185,55 @@ def send_claim_email(body: str, form_image_bytes: bytes | None, form_image_type:
         server.send_message(message)
 
 
+def _store_form_image(image_bytes: bytes, mime_type: str) -> None:
+    image_hash = str(hash(image_bytes))
+    if image_hash != st.session_state.form_image_hash:
+        st.session_state.form_image_hash = image_hash
+        st.session_state.form_image_bytes = image_bytes
+        st.session_state.form_image_type = mime_type or "image/jpeg"
+        st.session_state.form_data = {}
+        st.session_state.email_draft = ""
+        st.session_state.email_sent = False
+
+
+def _form_attachment_filename(mime_type: str) -> str:
+    if mime_type == "application/pdf":
+        return "subsidy_form.pdf"
+    if mime_type == "image/png":
+        return "subsidy_form.png"
+    return "subsidy_form.jpg"
+
+
 def render_form_assistant(conversation: ConversationState) -> None:
     st.markdown("### Scan a subsidy form")
-    st.caption("Take a clear photo of a printed form. Review every extracted detail before using it.")
+    st.caption("Take a photo or attach a file of your printed form. Review every extracted detail before using it.")
     if not secret("GEMINI_API_KEY"):
         st.info("Add GEMINI_API_KEY to use form scanning.")
         return
-    image = st.camera_input("Capture the form", key="subsidy_form_camera")
-    if image is not None:
-        image_hash = str(hash(image.getvalue()))
-        if image_hash != st.session_state.form_image_hash:
-            st.session_state.form_image_hash = image_hash
-            st.session_state.form_image_bytes = image.getvalue()
-            st.session_state.form_image_type = image.type or "image/jpeg"
-            st.session_state.form_data = {}
-            st.session_state.email_draft = ""
-            st.session_state.email_sent = False
+
+    form_bytes: bytes | None = None
+    form_mime = "image/jpeg"
+
+    camera_image = st.camera_input("Capture the form", key="subsidy_form_camera")
+    uploaded_form = st.file_uploader(
+        "Or attach a form photo or PDF",
+        type=["png", "jpg", "jpeg", "pdf"],
+        key="subsidy_form_upload",
+    )
+
+    if uploaded_form is not None:
+        form_bytes = uploaded_form.getvalue()
+        form_mime = uploaded_form.type or "image/jpeg"
+    elif camera_image is not None:
+        form_bytes = camera_image.getvalue()
+        form_mime = camera_image.type or "image/jpeg"
+
+    if form_bytes is not None:
+        _store_form_image(form_bytes, form_mime)
         if st.button("Read form", key="read_form", use_container_width=True):
             try:
                 with st.spinner("Reading the form…"):
-                    st.session_state.form_data = extract_form(image.getvalue(), image.type)
+                    st.session_state.form_data = extract_form(form_bytes, form_mime)
                 if not st.session_state.form_data:
                     st.warning("I could not read the form. Place it flat in good light and try again.")
                 else:
@@ -226,22 +261,44 @@ def render_form_assistant(conversation: ConversationState) -> None:
     # Dynamic document upload interface based on required documents
     st.markdown("---")
     st.markdown("#### Upload required documents")
-    st.caption("Provide clear photos or files of the following documents to attach to your claim:")
-    
+    st.caption("Take a photo or attach a file for each required document:")
+
     required_docs = conversation.result.required_documents
     if not required_docs:
         required_docs = ["Aadhar Card Photo", "Land Documents Photo"]
-        
+
     uploaded_files = []
     for doc in required_docs:
-        doc_key = f"doc_upload_{doc.lower().replace(' ', '_')}"
-        uploaded_file = st.file_uploader(f"{doc}", type=["png", "jpg", "jpeg", "pdf"], key=doc_key)
+        doc_slug = doc.lower().replace(" ", "_")
+        doc_key = f"doc_upload_{doc_slug}"
+        doc_cols = st.columns(2)
+        with doc_cols[0]:
+            camera_doc = st.camera_input(f"Photo: {doc}", key=f"doc_camera_{doc_slug}")
+        with doc_cols[1]:
+            uploaded_file = st.file_uploader(
+                f"Attach file: {doc}",
+                type=["png", "jpg", "jpeg", "pdf"],
+                key=doc_key,
+            )
+
+        attachment_bytes: bytes | None = None
+        attachment_name = ""
+        attachment_type = "image/jpeg"
         if uploaded_file is not None:
+            attachment_bytes = uploaded_file.getvalue()
+            attachment_name = uploaded_file.name
+            attachment_type = uploaded_file.type or "image/jpeg"
+        elif camera_doc is not None:
+            attachment_bytes = camera_doc.getvalue()
+            attachment_name = f"{doc_slug}.jpg"
+            attachment_type = camera_doc.type or "image/jpeg"
+
+        if attachment_bytes is not None:
             uploaded_files.append({
-                "name": uploaded_file.name,
-                "bytes": uploaded_file.getvalue(),
-                "type": uploaded_file.type,
-                "label": doc
+                "name": attachment_name,
+                "bytes": attachment_bytes,
+                "type": attachment_type,
+                "label": doc,
             })
 
     if st.button("Draft email to government office", key="draft_email", use_container_width=True):
@@ -260,7 +317,7 @@ def render_form_assistant(conversation: ConversationState) -> None:
     if st.session_state.email_draft:
         st.markdown("#### Email draft — review before sending")
         st.text_area("Draft", value=st.session_state.email_draft, height=300, key="email_preview")
-        if st.button("Send claim request to santhu.vibrant@gmail.com", key="send_claim_email", use_container_width=True):
+        if st.button("Send claim request to santoshdende@ewsattapur.com", key="send_claim_email", use_container_width=True):
             try:
                 with st.spinner("Sending the claim request…"):
                     send_claim_email(
