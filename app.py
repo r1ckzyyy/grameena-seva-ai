@@ -59,9 +59,13 @@ def init_state() -> None:
     }
     for key, value in defaults.items():
         st.session_state.setdefault(key, value)
+    # Streamlit can retain session values across deployments/reloads. Discard
+    # stale values from an older app version instead of crashing on startup.
+    if not isinstance(st.session_state.get("conversation"), ConversationState):
+        st.session_state.conversation = ConversationState()
     if st.session_state.farmer_id is None:
         st.session_state.farmer_id = st.session_state.conversation_service.start_new_farmer()
-        st.session_state.conversation.farmer_id = st.session_state.farmer_id
+    st.session_state.conversation.farmer_id = st.session_state.farmer_id
 
 
 def language_name(code: str) -> str:
