@@ -87,6 +87,14 @@ class ConversationService:
         conversation.farmer_id = farmer.id
         return farmer, conversation, True
 
+    def load_or_create_anonymous_farmer(self) -> tuple[FarmerRecord, ConversationState, bool]:
+        """Create a temporary session when a voice provider hides caller ID."""
+        farmer_id = self.start_new_farmer()
+        farmer = self.farmer_profiles.get(farmer_id)
+        if farmer is None:
+            farmer = FarmerRecord(id=farmer_id)
+        return farmer, ConversationState(farmer_id=farmer_id), False
+
     def bind_phone_identity(self, conversation: ConversationState, current_farmer_id: str, phone: str) -> tuple[str, bool]:
         """Attach an anonymous browser chat to the farmer's spoken phone identity."""
         farmer, _, returning = self.load_or_create_farmer(phone)

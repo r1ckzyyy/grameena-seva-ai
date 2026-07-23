@@ -2,6 +2,9 @@
 
 import tempfile
 import unittest
+import io
+import json
+import wave
 from pathlib import Path
 
 from models.conversation import AgentResult, ConversationState
@@ -9,9 +12,61 @@ from repositories.conversations import ConversationRepository
 from repositories.database import SQLiteDatabase
 from repositories.farmers import FarmerRepository, normalize_phone, normalize_spoken_phone
 from repositories.models import FarmerRecord
+try:
+    from services.exotel_transport import ExotelTransport
+except ModuleNotFoundError:
+    ExotelTransport = None
+
+
+class _FakeSocket:
+    def __init__(self, events):
+        self.events = iter(events)
+        self.sent = []
+
+    def receive(self):
+        return next(self.events, None)
+
+    def send(self, payload):
+        self.sent.append(json.loads(payload))
+
+
+class _FakeVoiceService:
+    def load_or_create_farmer(self, phone):
+        conversation = ConversationState(farmer_id="farmer-1")
+        return FarmerRecord(id="farmer-1", phone=phone), conversation, False
 
 
 class CoreRegressionTests(unittest.TestCase):
+    @unittest.skipIf(ExotelTransport is None, "voice-server dependencies are not installed")
+    def test_exotel_greets_after_connected_start_handshake(self):
+        wav = io.BytesIO()
+        with wave.open(wav, "wb") as output:
+            output.setnchannels(1)
+            output.setsampwidth(2)
+            output.setframerate(8000)
+            output.writeframes(b"\x01\x00" * 4000)
+        socket = _FakeSocket([
+            {"event": "connected"},
+            {"event": "start", "stream_sid": "stream-1", "start": {"stream_sid": "stream-1", "from": "+919876543210"}},
+            {"event": "stop"},
+        ])
+        transport = ExotelTransport(
+            _FakeVoiceService(),
+            gemini_key="",
+            tavily_key="",
+            firecrawl_key="",
+            sarvam_key="sarvam-key",
+            transcribe_fn=None,
+            text_to_speech_fn=lambda text, language, key: wav.getvalue(),
+        )
+
+        transport.handle(socket)
+
+        self.assertTrue(socket.sent)
+        self.assertEqual(socket.sent[0]["event"], "media")
+        self.assertEqual(socket.sent[0]["stream_sid"], "stream-1")
+        self.assertIn("payload", socket.sent[0]["media"])
+
     def test_phone_normalization_is_consistent(self):
         self.assertEqual(normalize_phone("+91 98765-43210"), "9876543210")
         self.assertEqual(normalize_phone("9876543210"), "9876543210")

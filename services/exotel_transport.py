@@ -65,14 +65,14 @@ class ExotelTransport:
     @staticmethod
     def _greeting(language: str, returning: bool, name: str = "") -> str:
         if not returning:
-            return "Namaskaram kaka. What farming scheme or subsidy do you need help with today?"
+            return "Hello, Namaskaram. Which government subsidy or farming scheme would you like help with today?"
         code = (language or "").casefold()
         suffix = f" {name}" if name else ""
         if code.startswith("te"):
             return f"నమస్తే కాకా, ఏం సంగతులు{suffix}? మీ వివరాలు నాకు గుర్తున్నాయి."
         if code.startswith("hi"):
             return f"कैसे हो चाचा, क्या हाल-चाल{suffix}? आपकी जानकारी मुझे याद है।"
-        return f"Namaste kaka, how are you{suffix}? I remember your farmer details."
+        return f"Hello, Namaste{suffix}. Which government subsidy or farming scheme would you like help with today?"
 
     @staticmethod
     def _pcm_from_audio(audio: bytes) -> bytes:
@@ -97,11 +97,18 @@ class ExotelTransport:
 
     def _send_audio(self, ws: Any, audio: bytes, stream_sid: str, sequence_number: int, chunk_number: int) -> tuple[int, int]:
         pcm = self._pcm_from_audio(audio)
+        if not pcm:
+            logger.warning("Exotel TTS returned empty audio")
+            return sequence_number, chunk_number
         # Exotel expects bidirectional media packets to carry stream identity
         # and sequencing metadata. Keep packets at 100–200 ms and multiples of
         # 320 bytes to avoid jitter/under-sized-packet playback failures.
         for offset in range(0, len(pcm), 3200):
             chunk = pcm[offset:offset + 3200]
+            if len(chunk) < 3200:
+                # Exotel may wait for more data when the final packet is below
+                # its 100 ms minimum. Pad only the last packet with silence.
+                chunk += b"\x00" * (3200 - len(chunk))
             if chunk:
                 ws.send(json.dumps({
                     "event": "media",
@@ -118,7 +125,14 @@ class ExotelTransport:
         return sequence_number, chunk_number
 
     def _say(self, ws: Any, text: str, language: str, stream_sid: str, sequence_number: int, chunk_number: int) -> tuple[int, int]:
-        audio = self.text_to_speech_fn(text, self._language_code(language), self.sarvam_key)
+        if not self.text_to_speech_fn or not self.sarvam_key:
+            logger.error("Cannot speak Exotel response: Sarvam TTS is not configured")
+            return sequence_number, chunk_number
+        try:
+            audio = self.text_to_speech_fn(text, self._language_code(language), self.sarvam_key)
+        except Exception:
+            logger.exception("Exotel TTS failed while speaking: %s", text[:80])
+            return sequence_number, chunk_number
         return self._send_audio(ws, audio, stream_sid, sequence_number, chunk_number)
 
     @staticmethod
@@ -146,15 +160,23 @@ class ExotelTransport:
             event_type = event.get("event")
             logger.info("Exotel stream event=%s", event_type)
             if event_type == "connected":
+                # Exotel sends no caller number or stream_sid in this packet.
+                # The greeting is sent on the immediately-following start
+                # packet, once the bidirectional media stream is identified.
+                logger.info("Exotel websocket connected; waiting for start event before greeting")
                 continue
             if event_type == "start":
                 start = event.get("start") or {}
                 stream_sid = str(event.get("stream_sid") or start.get("stream_sid") or "")
                 phone = normalize_phone(start.get("from") or start.get("caller") or "")
                 if not phone:
-                    logger.warning("Exotel stream had no usable caller number: %s", start)
-                    return
-                farmer, conversation, returning = self.conversation_service.load_or_create_farmer(phone)
+                    # Some Exotel flows expose a SIP/agent identifier instead
+                    # of the caller's mobile number. Keep the live stream
+                    # usable with a temporary session instead of hanging up.
+                    logger.warning("Exotel stream had no usable caller number; using temporary session: %s", start)
+                    farmer, conversation, returning = self.conversation_service.load_or_create_anonymous_farmer()
+                else:
+                    farmer, conversation, returning = self.conversation_service.load_or_create_farmer(phone)
                 farmer_id = farmer.id
                 logger.info("Exotel stream started call_sid=%s stream_sid=%s farmer_id=%s", start.get("call_sid"), stream_sid, farmer_id)
                 outbound_sequence, outbound_chunk = self._say(

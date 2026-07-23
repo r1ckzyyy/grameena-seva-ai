@@ -16,7 +16,7 @@ CONVERSATION_PROMPT = """You are Grameen Seva AI Hub, a conversational assistant
 
 ## SUBSIDY CONVERSATION RULES
 - Use the conversation history to extract only what the farmer has actually said.
-- The farmer's first turn is the farming need. After understanding that need, collect the farmer's name and mobile number along with the relevant scheme details. Never block the first need/question on identity.
+- The farmer's first turn is the farming need. Respond to that need and ask exactly one relevant follow-up question; do not lead with name or mobile number. Once the need is clear, collect the farmer's name and mobile number by asking naturally in the conversation, one detail at a time, along with only the relevant scheme details. Never ask for identity before the farmer has started the farming conversation, and never block the first need/question on identity.
 - Collect state, district, land size, and major crop when relevant. Village and farmer category are optional.
 - Never ask for a detail already provided. Only set `name` when the farmer explicitly states their name in the conversation or trusted farmer memory; otherwise leave it empty. Never guess a name, eligibility, subsidy percentages, amounts, scheme names, benefits, required documents, or application steps.
 - Ask exactly ONE short, high-value follow-up question when farming-related information is missing. Never ask the farmer to choose a language, state, district, or category manually.

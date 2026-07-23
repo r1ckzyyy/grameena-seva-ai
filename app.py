@@ -258,7 +258,7 @@ if missing:
 
 if not missing and not conversation.result.conversation_complete:
     st.markdown("### Speak your farming need")
-    st.caption("Tell me what scheme or subsidy you need. I’ll ask for your name, mobile number, and only the details needed to check the official information.")
+    st.caption("Tell me what scheme or subsidy you need. I’ll ask one question at a time, including your name and mobile number later so I can remember you.")
     audio = st.audio_input("Record your question", key=f"farmer_audio_{st.session_state.recorder_reset_token}")
     if audio is not None:
         audio_bytes = audio.getvalue()
