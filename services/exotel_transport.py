@@ -95,16 +95,31 @@ class ExotelTransport:
         except (wave.Error, EOFError, struct.error, ValueError):
             return audio
 
-    def _send_audio(self, ws: Any, audio: bytes) -> None:
+    def _send_audio(self, ws: Any, audio: bytes, stream_sid: str, sequence_number: int, chunk_number: int) -> tuple[int, int]:
         pcm = self._pcm_from_audio(audio)
-        for offset in range(0, len(pcm), 320):
-            chunk = pcm[offset:offset + 320]
+        # Exotel expects bidirectional media packets to carry stream identity
+        # and sequencing metadata. Keep packets at 100–200 ms and multiples of
+        # 320 bytes to avoid jitter/under-sized-packet playback failures.
+        for offset in range(0, len(pcm), 3200):
+            chunk = pcm[offset:offset + 3200]
             if chunk:
-                ws.send(json.dumps({"event": "media", "media": {"payload": base64.b64encode(chunk).decode("ascii")}}))
+                ws.send(json.dumps({
+                    "event": "media",
+                    "sequence_number": sequence_number,
+                    "stream_sid": stream_sid,
+                    "media": {
+                        "chunk": chunk_number,
+                        "timestamp": round(offset / 16),
+                        "payload": base64.b64encode(chunk).decode("ascii"),
+                    },
+                }))
+                sequence_number += 1
+                chunk_number += 1
+        return sequence_number, chunk_number
 
-    def _say(self, ws: Any, text: str, language: str) -> None:
+    def _say(self, ws: Any, text: str, language: str, stream_sid: str, sequence_number: int, chunk_number: int) -> tuple[int, int]:
         audio = self.text_to_speech_fn(text, self._language_code(language), self.sarvam_key)
-        self._send_audio(ws, audio)
+        return self._send_audio(ws, audio, stream_sid, sequence_number, chunk_number)
 
     @staticmethod
     def _rms(pcm: bytes) -> float:
@@ -119,6 +134,9 @@ class ExotelTransport:
         speech = bytearray()
         speech_started = False
         silent_seconds = 0.0
+        stream_sid = ""
+        outbound_sequence = 1
+        outbound_chunk = 1
 
         while True:
             raw = ws.receive()
@@ -126,14 +144,27 @@ class ExotelTransport:
                 return
             event = json.loads(raw) if isinstance(raw, str) else raw
             event_type = event.get("event")
+            logger.info("Exotel stream event=%s", event_type)
+            if event_type == "connected":
+                continue
             if event_type == "start":
                 start = event.get("start") or {}
+                stream_sid = str(event.get("stream_sid") or start.get("stream_sid") or "")
                 phone = normalize_phone(start.get("from") or start.get("caller") or "")
                 if not phone:
+                    logger.warning("Exotel stream had no usable caller number: %s", start)
                     return
                 farmer, conversation, returning = self.conversation_service.load_or_create_farmer(phone)
                 farmer_id = farmer.id
-                self._say(ws, self._greeting(conversation.language_code, returning, farmer.name), conversation.language_code or "en-IN")
+                logger.info("Exotel stream started call_sid=%s stream_sid=%s farmer_id=%s", start.get("call_sid"), stream_sid, farmer_id)
+                outbound_sequence, outbound_chunk = self._say(
+                    ws,
+                    self._greeting(conversation.language_code, returning, farmer.name),
+                    conversation.language_code or "en-IN",
+                    stream_sid,
+                    outbound_sequence,
+                    outbound_chunk,
+                )
                 continue
             if event_type == "stop":
                 return
@@ -169,7 +200,14 @@ class ExotelTransport:
                     conversation.language_code = detected
                 if not transcript:
                     continue
-                self._say(ws, self._thinking_message(conversation.language_code), conversation.language_code or "en-IN")
+                outbound_sequence, outbound_chunk = self._say(
+                    ws,
+                    self._thinking_message(conversation.language_code),
+                    conversation.language_code or "en-IN",
+                    stream_sid,
+                    outbound_sequence,
+                    outbound_chunk,
+                )
                 outcome = self.conversation_service.process_text(
                     transcript, conversation,
                     farmer_id=farmer_id,
@@ -178,7 +216,14 @@ class ExotelTransport:
                     firecrawl_key=self.firecrawl_key,
                     summarize=False,
                 )
-                self._say(ws, outcome.response_text or outcome.error_message, conversation.language_code or "en-IN")
+                outbound_sequence, outbound_chunk = self._say(
+                    ws,
+                    outcome.response_text or outcome.error_message,
+                    conversation.language_code or "en-IN",
+                    stream_sid,
+                    outbound_sequence,
+                    outbound_chunk,
+                )
                 if conversation.result.conversation_complete:
                     return
 
