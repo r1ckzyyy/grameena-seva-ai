@@ -6,7 +6,7 @@ import html
 
 import streamlit as st
 
-from config.settings import database_path, knowledge_cache_ttl_seconds, required_secrets, secret
+from config.settings import database_path, knowledge_cache_ttl_seconds, secret
 from models.conversation import ConversationState
 from repositories import create_repositories
 from repositories.farmers import normalize_spoken_phone
@@ -69,14 +69,17 @@ def render_styles() -> None:
         """
         <style>
         #MainMenu, footer {visibility:hidden;}
-        .stApp {background:#fcf9f8;}
-        .block-container {max-width:760px; padding-top:2rem; padding-bottom:8rem;}
-        .brand {text-align:center;color:#0d631b;font-size:2.2rem;font-weight:700;margin-bottom:.25rem;}
-        .subtitle {text-align:center;color:#40493d;font-size:1.05rem;margin-bottom:1.5rem;}
-        .bubble {border-radius:22px;padding:1rem 1.2rem;margin:.7rem 0;font-size:1.1rem;line-height:1.55;white-space:pre-wrap;}
-        .bubble-label {font-size:.8rem;font-weight:700;margin-bottom:.25rem;opacity:.75;}
-        .farmer-bubble {background:#81c784;color:#fff;margin-left:15%;border-top-right-radius:5px;}
-        .assistant-bubble {background:#fff;color:#1b1b1b;margin-right:8%;border:1px solid #dce7d8;border-top-left-radius:5px;}
+        .stApp {background:#fbf7ef;color:#2f3b2f;}
+        .block-container {max-width:760px;padding-top:1.25rem;padding-bottom:3rem;}
+        .brand {text-align:center;color:#176b35;font-size:2.2rem;font-weight:800;margin-bottom:.2rem;}
+        .subtitle {text-align:center;color:#765d3b;font-size:1rem;margin-bottom:1.6rem;}
+        .bubble {border-radius:20px;padding:1rem 1.2rem;margin:.7rem 0;font-size:1.08rem;line-height:1.55;white-space:pre-wrap;}
+        .farmer-bubble {background:#d9edcf;color:#245b2a;margin-left:15%;border-top-right-radius:5px;}
+        .assistant-bubble {background:#fff1d6;color:#4d3826;margin-right:8%;border:1px solid #ead3a6;border-top-left-radius:5px;}
+        div[data-testid="stAudioInput"] {background:#e7f2df;border:1px solid #b7d3a8;border-radius:18px;padding:.35rem;}
+        div[data-testid="stAudioInput"] button {background:#5b9b4b;color:#fff;border-radius:12px;}
+        div[data-testid="stAudioInput"] button:hover {background:#3f7e37;color:#fff;}
+        .stAudio {margin-top:1rem;}
         </style>
         """,
         unsafe_allow_html=True,
@@ -85,13 +88,11 @@ def render_styles() -> None:
 
 def render_chat(conversation: ConversationState) -> None:
     if not conversation.turns:
-        st.info("Ask about an agricultural subsidy or government scheme by voice or text.")
         return
     for turn in conversation.turns:
         bubble = "farmer-bubble" if turn["role"] == "farmer" else "assistant-bubble"
-        label = "You" if turn["role"] == "farmer" else "Grameen AI"
         st.markdown(
-            f'<div class="bubble {bubble}"><div class="bubble-label">{label}</div>{html.escape(turn["text"])}</div>',
+            f'<div class="bubble {bubble}">{html.escape(turn["text"])}</div>',
             unsafe_allow_html=True,
         )
 
@@ -193,9 +194,7 @@ def reset_farmer() -> None:
 
 def render_onboarding() -> None:
     """Identify the farmer through the microphone before starting the conversation."""
-    st.markdown("### Namaskaram kaka! 😊")
-    st.write("Tap the microphone and say your 10-digit mobile number slowly, one digit at a time.")
-    audio = st.audio_input("Speak your mobile number", key=f"phone_audio_{st.session_state.recorder_reset_token}")
+    audio = st.audio_input("", label_visibility="collapsed", key=f"phone_audio_{st.session_state.recorder_reset_token}")
     if audio is None:
         return
     audio_bytes = audio.getvalue()
@@ -207,15 +206,12 @@ def render_onboarding() -> None:
         transcript, _ = transcribe(audio_bytes, secret("SARVAM_API_KEY"))
         phone = normalize_spoken_phone(transcript)
     except Exception:
-        st.warning("I could not hear the number clearly. Please tap the microphone and try again.")
         return
     if not phone:
-        st.warning("I could not recognize a valid 10-digit number. Please say each digit slowly and try again.")
         return
     try:
         farmer, conversation, returning = st.session_state.conversation_service.load_or_create_farmer(phone)
-    except ValueError as exc:
-        st.warning(str(exc))
+    except ValueError:
         return
     st.session_state.farmer_id = farmer.id
     st.session_state.conversation = conversation
@@ -251,31 +247,11 @@ if not st.session_state.farmer_id:
     render_onboarding()
     st.stop()
 
-controls = st.columns(2)
-if controls[0].button("Start New Farmer", use_container_width=True):
-    reset_farmer()
-    st.rerun()
-if controls[1].button("Delete Current Farmer", use_container_width=True):
-    current_farmer = st.session_state.farmer_id
-    st.session_state.conversation_service.farmer_profiles.delete_farmer(current_farmer)
-    reset_farmer()
-    st.rerun()
-
 conversation: ConversationState = st.session_state.conversation
-if st.session_state.onboarding_message:
-    st.success(st.session_state.onboarding_message)
-    st.session_state.onboarding_message = ""
-render_profile_summary()
 render_chat(conversation)
-render_result(conversation)
 
-missing = [key for key in required_secrets() if not secret(key)]
-if missing:
-    st.info("Add the required API keys before using the assistant: " + ", ".join(missing))
-
-if not conversation.result.conversation_complete and not missing:
-    st.markdown("### Voice conversation")
-    audio = st.audio_input("Speak your farming question", key=f"farmer_audio_{st.session_state.recorder_reset_token}")
+if not conversation.result.conversation_complete:
+    audio = st.audio_input("", label_visibility="collapsed", key=f"farmer_audio_{st.session_state.recorder_reset_token}")
     if audio is not None:
         audio_bytes = audio.getvalue()
         audio_hash = str(hash(audio_bytes))
@@ -284,7 +260,5 @@ if not conversation.result.conversation_complete and not missing:
             process_audio(audio_bytes)
             st.rerun()
 
-if st.session_state.error_message:
-    st.warning(st.session_state.error_message)
 if st.session_state.tts_audio:
     st.audio(st.session_state.tts_audio, format="audio/wav", autoplay=False)
