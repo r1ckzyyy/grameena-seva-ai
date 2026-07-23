@@ -1,0 +1,7 @@
+streamlit==1.45.1
+sarvamai==0.1.19
+google-genai==1.25.0
+tavily-python==0.7.2
+firecrawl-py==2.5.4
+flask>=3.0.0
+twilio>=9.0.0
