@@ -34,7 +34,8 @@ def init_state() -> None:
         )
     defaults = {
         "farmer_id": None,
-        "conversation": None,
+        "conversation": ConversationState(),
+        "identity_pending": True,
         "onboarding_message": "",
         "tts_audio": None,
         "tts_token": 0,
@@ -46,10 +47,11 @@ def init_state() -> None:
     }
     for key, value in defaults.items():
         st.session_state.setdefault(key, value)
-    if st.session_state.farmer_id is None:
-        farmer_id = st.session_state.conversation_service.start_new_farmer()
-        st.session_state.farmer_id = farmer_id
-        st.session_state.conversation = ConversationState(farmer_id=farmer_id)
+    if not st.session_state.conversation.turns:
+        st.session_state.conversation.add_turn(
+            "assistant",
+            "Please tell me your 10-digit mobile number so I can find your farmer details.",
+        )
 
 
 def format_inr(amount: int) -> str:
@@ -74,16 +76,18 @@ def render_styles() -> None:
         <style>
         #MainMenu, footer {visibility:hidden;}
         .stApp {background:#fbf7ef;color:#2f3b2f;}
-        .block-container {max-width:760px;padding-top:1.25rem;padding-bottom:3rem;}
-        .brand {text-align:center;color:#176b35;font-size:2.2rem;font-weight:800;margin-bottom:.2rem;}
-        .subtitle {text-align:center;color:#765d3b;font-size:1rem;margin-bottom:1.6rem;}
-        .bubble {border-radius:20px;padding:1rem 1.2rem;margin:.7rem 0;font-size:1.08rem;line-height:1.55;white-space:pre-wrap;}
-        .farmer-bubble {background:#d9edcf;color:#245b2a;margin-left:15%;border-top-right-radius:5px;}
-        .assistant-bubble {background:#fff1d6;color:#4d3826;margin-right:8%;border:1px solid #ead3a6;border-top-left-radius:5px;}
-        div[data-testid="stAudioInput"] {background:#e7f2df;border:1px solid #b7d3a8;border-radius:18px;padding:.35rem;}
-        div[data-testid="stAudioInput"] button {background:#5b9b4b;color:#fff;border-radius:12px;}
-        div[data-testid="stAudioInput"] button:hover {background:#3f7e37;color:#fff;}
-        .stAudio {margin-top:1rem;}
+        .block-container {max-width:760px;padding-top:2.5rem;padding-bottom:18rem;}
+        .brand {text-align:center;color:#0d631b;font:700 2.2rem Montserrat;margin-bottom:.25rem;}
+        .subtitle {text-align:center;color:#40493d;font-size:1.05rem;margin-bottom:1.5rem;}
+        .empty-card {background:#fff;border:1px solid #dce7d8;border-radius:24px;padding:2rem;text-align:center;color:#0d631b;font-size:1.35rem;font-weight:600;margin:1rem 0 2rem;box-shadow:0 10px 30px #2e7d3214;}
+        .empty-card small {color:#596653;font-size:1rem;font-weight:400;}
+        .bubble {border-radius:22px;padding:1rem 1.2rem;margin:.7rem 0;font-size:1.15rem;line-height:1.55;white-space:pre-wrap;}
+        .bubble-label {font-size:.8rem;font-weight:700;margin-bottom:.25rem;opacity:.75;}
+        .farmer-bubble {background:#dcefd4;color:#245b2a;margin-left:15%;border-top-right-radius:5px;}
+        .assistant-bubble {background:#fff;color:#1b1b1b;margin-right:8%;border:1px solid #dce7d8;box-shadow:0 8px 24px #2e7d3210;border-top-left-radius:5px;}
+        .result-title {color:#0d631b;font:700 1.3rem Montserrat;margin-top:1.5rem;margin-bottom:.7rem;}
+        div[data-testid="stMetric"] {background:#fff;border:1px solid #dce7d8;border-radius:16px;padding:1rem;}
+        div[data-testid="stAudioInput"] button {background:#0d631b;color:#fff;border-radius:12px;}
         </style>
         """,
         unsafe_allow_html=True,
@@ -92,11 +96,13 @@ def render_styles() -> None:
 
 def render_chat(conversation: ConversationState) -> None:
     if not conversation.turns:
+        st.markdown('<div class="empty-card">Tap the microphone and speak naturally.<br><small>I will detect your language automatically.</small></div>', unsafe_allow_html=True)
         return
     for turn in conversation.turns:
         bubble = "farmer-bubble" if turn["role"] == "farmer" else "assistant-bubble"
+        label = "You" if turn["role"] == "farmer" else "Grameen AI"
         st.markdown(
-            f'<div class="bubble {bubble}">{html.escape(turn["text"])}</div>',
+            f'<div class="bubble {bubble}"><div class="bubble-label">{label}</div>{html.escape(turn["text"])}</div>',
             unsafe_allow_html=True,
         )
 
@@ -165,9 +171,50 @@ def process_text(text: str) -> None:
     st.session_state.error_message = outcome.error_message
 
 
+def speak(text: str, language: str = "en-IN") -> None:
+    try:
+        audio = text_to_speech(text, language, secret("SARVAM_API_KEY"))
+    except Exception:
+        return
+    st.session_state.tts_audio = audio
+    st.session_state.tts_token += 1
+
+
+def process_identity_audio(audio_bytes: bytes) -> None:
+    """Resolve the farmer from the first spoken turn before normal chat begins."""
+    try:
+        transcript, detected_language = transcribe(audio_bytes, secret("SARVAM_API_KEY"))
+    except Exception:
+        return
+    phone = normalize_spoken_phone(transcript)
+    if not phone:
+        conversation: ConversationState = st.session_state.conversation
+        conversation.add_turn("farmer", transcript or "")
+        response = "Please tell me your 10-digit mobile number first, one digit at a time."
+        conversation.add_turn("assistant", response)
+        speak(response, detected_language or "en-IN")
+        return
+    try:
+        farmer, conversation, returning = st.session_state.conversation_service.load_or_create_farmer(phone)
+    except ValueError:
+        return
+    st.session_state.farmer_id = farmer.id
+    st.session_state.conversation = conversation
+    st.session_state.identity_pending = False
+    if returning:
+        response = f"Welcome back {farmer.name or 'farmer'}. I found your saved details. What farming help do you need today?"
+    else:
+        response = "Namaskaram. Your farmer profile is ready. Tell me what farming support you need."
+        conversation.add_turn("assistant", response)
+    speak(response, conversation.language_code or detected_language or "en-IN")
+
+
 def process_audio(audio_bytes: bytes) -> None:
     st.session_state.error_message = ""
     st.session_state.recorder_reset_token += 1
+    if st.session_state.identity_pending:
+        process_identity_audio(audio_bytes)
+        return
     outcome = st.session_state.conversation_service.process_audio(
         audio_bytes,
         st.session_state.conversation,
@@ -251,7 +298,7 @@ conversation: ConversationState = st.session_state.conversation
 render_chat(conversation)
 
 if not conversation.result.conversation_complete:
-    audio = st.audio_input("", label_visibility="collapsed", key=f"farmer_audio_{st.session_state.recorder_reset_token}")
+    audio = st.audio_input("Record your question", key=f"farmer_audio_{st.session_state.recorder_reset_token}")
     if audio is not None:
         audio_bytes = audio.getvalue()
         audio_hash = str(hash(audio_bytes))
@@ -261,4 +308,6 @@ if not conversation.result.conversation_complete:
             st.rerun()
 
 if st.session_state.tts_audio:
-    st.audio(st.session_state.tts_audio, format="audio/wav", autoplay=False)
+    autoplay = st.session_state.last_played_tts_token != st.session_state.tts_token
+    st.audio(st.session_state.tts_audio, format="audio/wav", autoplay=autoplay)
+    st.session_state.last_played_tts_token = st.session_state.tts_token
