@@ -285,6 +285,7 @@ def create_exotel_app(transport: ExotelTransport) -> Flask:
     def root() -> tuple[str, int]:
         return "ok", 200
 
+    @sock.route("/media")
     @sock.route("/exotel/media")
     def media(ws: Any) -> None:
         try:

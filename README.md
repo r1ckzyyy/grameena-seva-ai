@@ -49,7 +49,8 @@ For local testing, both processes can use the same SQLite file by setting the sa
 
 For Exotel AgentStream, deploy this service on a public HTTPS host and configure
 the Exotel Voicebot applet as a bidirectional stream to:
-`wss://YOUR-SERVICE.onrender.com/exotel/media`. The service sends the greeting
+`wss://YOUR-SERVICE.onrender.com/media` (the compatible `/exotel/media` path is
+also supported). The service sends the greeting
 after Exotel's `connected` and `start` events, then transcribes caller audio with
 Sarvam. Set `EXOTEL_ACCOUNT_SID`, `EXOTEL_API_KEY`, `EXOTEL_API_TOKEN`,
 `EXOTEL_EXOPHONE`, and the four AI keys in the service environment. The
