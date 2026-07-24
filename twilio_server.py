@@ -74,9 +74,11 @@ def main() -> None:
             text_to_speech_fn=exotel_tts,
         )
         greeting = "Hello, Namaskaram. Which government subsidy or farming scheme would you like help with today?"
+        thinking = "One moment, I am checking the official information. Please wait."
         try:
             logger.info("Preloading Exotel greeting audio")
             transport.preload_audio(greeting, "en-IN", exotel_tts(greeting, "en-IN", transport.sarvam_key))
+            transport.preload_audio(thinking, "en-IN", exotel_tts(thinking, "en-IN", transport.sarvam_key))
         except Exception:
             logger.exception("Unable to preload Exotel greeting audio")
         app = create_exotel_app(transport)
