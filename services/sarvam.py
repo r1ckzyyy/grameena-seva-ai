@@ -31,12 +31,22 @@ def transcribe(audio_bytes: bytes, api_key: str) -> tuple[str, str]:
     return transcript, language
 
 
-def text_to_speech(text: str, language_code: str, api_key: str) -> bytes:
+def text_to_speech(
+    text: str,
+    language_code: str,
+    api_key: str,
+    *,
+    output_audio_codec: str | None = None,
+    speech_sample_rate: int | None = None,
+) -> bytes:
+    """Generate speech, optionally requesting a telephony-friendly format."""
     result = _client(api_key).text_to_speech.convert(
         text=text[:2500],
         target_language_code=language_code or "hi-IN",
         model="bulbul:v3",
         speaker="shubh",
+        **({"output_audio_codec": output_audio_codec} if output_audio_codec else {}),
+        **({"speech_sample_rate": speech_sample_rate} if speech_sample_rate else {}),
     )
     raw: Any = result.audios[0]
     return base64.b64decode(raw) if isinstance(raw, str) else raw

@@ -44,6 +44,15 @@ def main() -> None:
         knowledge = KnowledgeService(repositories.research_cache, scheme_repository=repositories.schemes, ttl_seconds=knowledge_cache_ttl_seconds())
         profiles = FarmerProfileService(repositories.farmers, repositories.conversations)
         service = ConversationService(repositories.conversations, knowledge, profiles, EligibilityService())
+        def exotel_tts(text: str, language: str, api_key: str) -> bytes:
+            return text_to_speech(
+                text,
+                language,
+                api_key,
+                output_audio_codec="linear16",
+                speech_sample_rate=8000,
+            )
+
         app = create_exotel_app(ExotelTransport(
             service,
             gemini_key=secret("GEMINI_API_KEY"),
@@ -51,7 +60,7 @@ def main() -> None:
             firecrawl_key=secret("FIRECRAWL_API_KEY"),
             sarvam_key=secret("SARVAM_API_KEY"),
             transcribe_fn=transcribe,
-            text_to_speech_fn=text_to_speech,
+            text_to_speech_fn=exotel_tts,
         ))
     elif twilio_configured():
         app = create_twilio_app(build_transport())
