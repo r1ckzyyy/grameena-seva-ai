@@ -49,11 +49,13 @@ def _localized_fallback(language: str, kind: str = "temporary") -> str:
     }
     language_messages = next((value for key, value in messages.items() if code.startswith(key)), None)
     if language_messages:
+        if kind == "temporary":
+            return language_messages["repeat"]
         return language_messages[kind]
     if code.startswith("hi"):
         return messages["hi"][kind]
     return {
-        "temporary": "I am having a temporary connection problem. Please speak again in a moment.",
+        "temporary": "I didn’t catch that clearly. Please say it again.",
         "repeat": "Please tell me one more detail about your farming need.",
         "prompt": "Please tell me what farming support you need.",
     }[kind]

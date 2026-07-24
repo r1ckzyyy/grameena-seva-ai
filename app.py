@@ -111,6 +111,11 @@ def render_styles() -> None:
         .bubble-label {font-size:.8rem;font-weight:700;margin-bottom:.25rem;opacity:.75;}
         .farmer-bubble {background:#81c784;color:#fff;margin-left:15%;border-top-right-radius:5px;}
         .assistant-bubble {background:#fff;color:#1b1b1b;margin-right:8%;border:1px solid #dce7d8;box-shadow:0 8px 24px #2e7d3210;border-top-left-radius:5px;}
+        .assistant-bubble, .assistant-bubble * {color:#1b1b1b !important;}
+        .stMarkdown, .stMarkdown p, .stCaption, .stCaption p, label,
+        div[data-testid="stAlert"], div[data-testid="stAlert"] p {
+            color:#1b1b1b !important;
+        }
         .result-title {color:#0d631b;font:700 1.3rem Montserrat;margin-top:1.5rem;margin-bottom:.7rem;}
         div[data-testid="stMetric"] {background:#fff;border:1px solid #dce7d8;border-radius:16px;padding:1rem;}
         div[data-testid="stAudioInput"] button {background:#0d631b;color:#fff;border-radius:12px;}
