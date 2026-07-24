@@ -121,18 +121,17 @@ class ExotelTransport:
             if chunk:
                 ws.send(json.dumps({
                     "event": "media",
-                    "sequence_number": sequence_number,
                     "stream_sid": stream_sid,
                     "media": {
-                        "chunk": chunk_number,
-                        "timestamp": round(offset / 16),
+                        "chunk": str(chunk_number),
+                        "timestamp": str(round(offset / 16)),
                         "payload": base64.b64encode(chunk).decode("ascii"),
                     },
                 }))
                 # Exotel's bidirectional stream is a real-time media channel.
                 # Do not burst the whole greeting into the socket at once;
                 # pace each packet to its duration so the platform can play it.
-                time.sleep(len(chunk) / (8000 * 2))
+                time.sleep(0.1)
                 sequence_number += 1
                 chunk_number += 1
         return sequence_number, chunk_number
