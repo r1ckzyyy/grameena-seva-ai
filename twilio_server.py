@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import logging
 
 from config.settings import database_path, exotel_configured, knowledge_cache_ttl_seconds, secret, twilio_configured, twilio_port, twilio_public_base_url
 from repositories import create_repositories
@@ -15,6 +16,9 @@ from services.sarvam import text_to_speech
 from services.sarvam import transcribe
 from services.exotel_transport import ExotelTransport, create_exotel_app
 from services.twilio_transport import TwilioTransport, create_twilio_app
+
+
+logger = logging.getLogger("grameen_seva.exotel")
 
 
 def build_transport() -> TwilioTransport:
@@ -45,13 +49,20 @@ def main() -> None:
         profiles = FarmerProfileService(repositories.farmers, repositories.conversations)
         service = ConversationService(repositories.conversations, knowledge, profiles, EligibilityService())
         def exotel_tts(text: str, language: str, api_key: str) -> bytes:
-            return text_to_speech(
-                text,
-                language,
-                api_key,
-                output_audio_codec="linear16",
-                speech_sample_rate=8000,
-            )
+            try:
+                return text_to_speech(
+                    text,
+                    language,
+                    api_key,
+                    output_audio_codec="linear16",
+                    speech_sample_rate=8000,
+                )
+            except Exception:
+                # Older Sarvam SDKs do not accept the explicit codec options.
+                # Fall back to their default WAV output; the Exotel adapter
+                # converts that WAV to 8 kHz PCM before sending it.
+                logger.warning("Sarvam SDK does not support telephony codec options; falling back to WAV")
+                return text_to_speech(text, language, api_key)
 
         app = create_exotel_app(ExotelTransport(
             service,
