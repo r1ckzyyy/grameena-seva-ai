@@ -64,7 +64,7 @@ def main() -> None:
                 logger.warning("Sarvam SDK does not support telephony codec options; falling back to WAV")
                 return text_to_speech(text, language, api_key)
 
-        app = create_exotel_app(ExotelTransport(
+        transport = ExotelTransport(
             service,
             gemini_key=secret("GEMINI_API_KEY"),
             tavily_key=secret("TAVILY_API_KEY"),
@@ -72,7 +72,14 @@ def main() -> None:
             sarvam_key=secret("SARVAM_API_KEY"),
             transcribe_fn=transcribe,
             text_to_speech_fn=exotel_tts,
-        ))
+        )
+        greeting = "Hello, Namaskaram. Which government subsidy or farming scheme would you like help with today?"
+        try:
+            logger.info("Preloading Exotel greeting audio")
+            transport.preload_audio(greeting, "en-IN", exotel_tts(greeting, "en-IN", transport.sarvam_key))
+        except Exception:
+            logger.exception("Unable to preload Exotel greeting audio")
+        app = create_exotel_app(transport)
     elif twilio_configured():
         app = create_twilio_app(build_transport())
     else:

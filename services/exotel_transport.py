@@ -44,6 +44,12 @@ class ExotelTransport:
         self.sarvam_key = sarvam_key
         self.transcribe_fn = transcribe_fn
         self.text_to_speech_fn = text_to_speech_fn
+        self.audio_cache: dict[tuple[str, str], bytes] = {}
+
+    def preload_audio(self, text: str, language: str, audio: bytes) -> None:
+        """Cache audio generated before a call so the first response is immediate."""
+        if audio:
+            self.audio_cache[(text, self._language_code(language))] = audio
 
     @staticmethod
     def _language_code(language: str) -> str:
@@ -129,11 +135,17 @@ class ExotelTransport:
         if not self.text_to_speech_fn or not self.sarvam_key:
             logger.error("Cannot speak Exotel response: Sarvam TTS is not configured")
             return sequence_number, chunk_number
-        try:
-            audio = self.text_to_speech_fn(text, self._language_code(language), self.sarvam_key)
-        except Exception:
-            logger.exception("Exotel TTS failed while speaking: %s", text[:80])
-            return sequence_number, chunk_number
+        language_code = self._language_code(language)
+        cache_key = (text, language_code)
+        audio = self.audio_cache.get(cache_key)
+        if audio is None:
+            try:
+                audio = self.text_to_speech_fn(text, language_code, self.sarvam_key)
+                if audio:
+                    self.audio_cache[cache_key] = audio
+            except Exception:
+                logger.exception("Exotel TTS failed while speaking: %s", text[:80])
+                return sequence_number, chunk_number
         return self._send_audio(ws, audio, stream_sid, sequence_number, chunk_number)
 
     @staticmethod
