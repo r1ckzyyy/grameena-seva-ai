@@ -8,6 +8,7 @@ import json
 import logging
 import math
 import struct
+import time
 import wave
 from typing import Any
 
@@ -128,6 +129,10 @@ class ExotelTransport:
                         "payload": base64.b64encode(chunk).decode("ascii"),
                     },
                 }))
+                # Exotel's bidirectional stream is a real-time media channel.
+                # Do not burst the whole greeting into the socket at once;
+                # pace each packet to its duration so the platform can play it.
+                time.sleep(len(chunk) / (8000 * 2))
                 sequence_number += 1
                 chunk_number += 1
         return sequence_number, chunk_number
