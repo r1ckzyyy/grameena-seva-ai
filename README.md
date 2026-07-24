@@ -45,7 +45,15 @@ Both entry points construct the same `ConversationService` and use the same sche
 
 For local testing, both processes can use the same SQLite file by setting the same `GRAMEEN_SEVA_DB_PATH`. For separate hosted services, do not use a local SQLite path: configure the same PostgreSQL `DATABASE_URL` in the Render Twilio service and in Streamlit secrets. This is what makes a query made by phone and a query made in the app resolve to the same farmer memory and conversation history.
 
-## Optional Twilio voice server
+## Optional Exotel or Twilio voice server
+
+For Exotel AgentStream, deploy this service on a public HTTPS host and configure
+the Exotel Voicebot applet as a bidirectional stream to:
+`wss://YOUR-SERVICE.onrender.com/exotel/media`. The service sends the greeting
+after Exotel's `connected` and `start` events, then transcribes caller audio with
+Sarvam. Set `EXOTEL_ACCOUNT_SID`, `EXOTEL_API_KEY`, `EXOTEL_API_TOKEN`,
+`EXOTEL_EXOPHONE`, and the four AI keys in the service environment. The
+`/health` endpoint should return `ok` before testing a call.
 
 The Twilio adapter reuses `ConversationService` and is inactive until the Twilio account settings are present:
 

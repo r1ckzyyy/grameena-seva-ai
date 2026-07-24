@@ -16,6 +16,7 @@ from flask_sock import Sock
 
 from models.conversation import ConversationState
 from repositories.farmers import normalize_phone
+from repositories.models import FarmerRecord
 from services.conversation import ConversationService
 
 
@@ -169,14 +170,23 @@ class ExotelTransport:
                 start = event.get("start") or {}
                 stream_sid = str(event.get("stream_sid") or start.get("stream_sid") or "")
                 phone = normalize_phone(start.get("from") or start.get("caller") or "")
-                if not phone:
-                    # Some Exotel flows expose a SIP/agent identifier instead
-                    # of the caller's mobile number. Keep the live stream
-                    # usable with a temporary session instead of hanging up.
-                    logger.warning("Exotel stream had no usable caller number; using temporary session: %s", start)
-                    farmer, conversation, returning = self.conversation_service.load_or_create_anonymous_farmer()
-                else:
-                    farmer, conversation, returning = self.conversation_service.load_or_create_farmer(phone)
+                try:
+                    if not phone:
+                        # Some Exotel flows expose a SIP/agent identifier instead
+                        # of the caller's mobile number. Keep the live stream
+                        # usable with a temporary session instead of hanging up.
+                        logger.warning("Exotel stream had no usable caller number; using temporary session: %s", start)
+                        farmer, conversation, returning = self.conversation_service.load_or_create_anonymous_farmer()
+                    else:
+                        farmer, conversation, returning = self.conversation_service.load_or_create_farmer(phone)
+                except Exception:
+                    # Voice must remain usable even when the shared database is
+                    # unavailable. Persistence is best-effort for Exotel.
+                    logger.exception("Exotel farmer lookup failed; using in-memory session")
+                    temporary_id = f"exotel-{stream_sid or 'session'}"
+                    farmer = FarmerRecord(id=temporary_id)
+                    conversation = ConversationState(farmer_id=temporary_id)
+                    returning = False
                 farmer_id = farmer.id
                 logger.info("Exotel stream started call_sid=%s stream_sid=%s farmer_id=%s", start.get("call_sid"), stream_sid, farmer_id)
                 outbound_sequence, outbound_chunk = self._say(
@@ -217,7 +227,16 @@ class ExotelTransport:
                     output.setsampwidth(2)
                     output.setframerate(8000)
                     output.writeframes(utterance)
-                transcript, detected = self.transcribe_fn(wav.getvalue(), self.sarvam_key)
+                try:
+                    transcript, detected = self.transcribe_fn(wav.getvalue(), self.sarvam_key)
+                except Exception:
+                    logger.exception("Exotel speech transcription failed")
+                    outbound_sequence, outbound_chunk = self._say(
+                        ws, "I could not hear that clearly. Please say it again.",
+                        conversation.language_code or "en-IN", stream_sid,
+                        outbound_sequence, outbound_chunk,
+                    )
+                    continue
                 if detected:
                     conversation.language_code = detected
                 if not transcript:
@@ -230,17 +249,21 @@ class ExotelTransport:
                     outbound_sequence,
                     outbound_chunk,
                 )
-                outcome = self.conversation_service.process_text(
-                    transcript, conversation,
-                    farmer_id=farmer_id,
-                    gemini_key=self.gemini_key,
-                    tavily_key=self.tavily_key,
-                    firecrawl_key=self.firecrawl_key,
-                    summarize=False,
-                )
+                try:
+                    outcome = self.conversation_service.process_text(
+                        transcript, conversation,
+                        farmer_id=farmer_id,
+                        gemini_key=self.gemini_key,
+                        tavily_key=self.tavily_key,
+                        firecrawl_key=self.firecrawl_key,
+                        summarize=False,
+                    )
+                except Exception:
+                    logger.exception("Exotel conversation processing failed")
+                    outcome = None
                 outbound_sequence, outbound_chunk = self._say(
                     ws,
-                    outcome.response_text or outcome.error_message,
+                    (outcome.response_text or outcome.error_message) if outcome else "I am having trouble checking that right now. Please say it again.",
                     conversation.language_code or "en-IN",
                     stream_sid,
                     outbound_sequence,
@@ -253,6 +276,10 @@ class ExotelTransport:
 def create_exotel_app(transport: ExotelTransport) -> Flask:
     app = Flask(__name__)
     sock = Sock(app)
+
+    @app.get("/health")
+    def health() -> tuple[str, int]:
+        return "ok", 200
 
     @sock.route("/exotel/media")
     def media(ws: Any) -> None:
