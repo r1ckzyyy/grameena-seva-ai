@@ -218,7 +218,9 @@ class ExotelTransport:
                     outbound_sequence,
                     outbound_chunk,
                 )
-                ignore_input_until = time.monotonic() + self.last_audio_duration + 0.5
+                # _say already waits while sending the audio in real time;
+                # only guard the short acoustic echo tail after it returns.
+                ignore_input_until = time.monotonic() + 0.5
                 continue
             if event_type == "stop":
                 return
@@ -265,7 +267,7 @@ class ExotelTransport:
                         conversation.language_code or "en-IN", stream_sid,
                         outbound_sequence, outbound_chunk,
                     )
-                    ignore_input_until = time.monotonic() + self.last_audio_duration + 0.5
+                    ignore_input_until = time.monotonic() + 0.5
                     continue
                 if detected:
                     conversation.language_code = detected
@@ -280,7 +282,7 @@ class ExotelTransport:
                     outbound_sequence,
                     outbound_chunk,
                 )
-                ignore_input_until = time.monotonic() + self.last_audio_duration + 0.5
+                ignore_input_until = time.monotonic() + 0.5
                 try:
                     outcome = self.conversation_service.process_text(
                         transcript, conversation,
@@ -301,7 +303,7 @@ class ExotelTransport:
                     outbound_sequence,
                     outbound_chunk,
                 )
-                ignore_input_until = time.monotonic() + self.last_audio_duration + 0.5
+                ignore_input_until = time.monotonic() + 0.5
                 if conversation.result.conversation_complete:
                     return
 
