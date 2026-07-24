@@ -107,6 +107,7 @@ class ExotelTransport:
         if not pcm:
             logger.warning("Exotel TTS returned empty audio")
             return sequence_number, chunk_number
+        logger.info("Sending Exotel audio bytes=%d stream_sid=%s", len(pcm), stream_sid)
         # Exotel expects bidirectional media packets to carry stream identity
         # and sequencing metadata. Keep packets at 100–200 ms and multiples of
         # 320 bytes to avoid jitter/under-sized-packet playback failures.

@@ -54,7 +54,7 @@ def main() -> None:
                     text,
                     language,
                     api_key,
-                    output_audio_codec="linear16",
+                    output_audio_codec="wav",
                     speech_sample_rate=8000,
                 )
             except Exception:
