@@ -46,6 +46,7 @@ class ExotelTransport:
         self.transcribe_fn = transcribe_fn
         self.text_to_speech_fn = text_to_speech_fn
         self.audio_cache: dict[tuple[str, str], bytes] = {}
+        self.last_audio_duration = 0.0
 
     def preload_audio(self, text: str, language: str, audio: bytes) -> None:
         """Cache audio generated before a call so the first response is immediate."""
@@ -107,7 +108,9 @@ class ExotelTransport:
         pcm = self._pcm_from_audio(audio)
         if not pcm:
             logger.warning("Exotel TTS returned empty audio")
+            self.last_audio_duration = 0.0
             return sequence_number, chunk_number
+        self.last_audio_duration = len(pcm) / (8000 * 2)
         logger.info("Sending Exotel audio bytes=%d stream_sid=%s", len(pcm), stream_sid)
         # Exotel expects bidirectional media packets to carry stream identity
         # and sequencing metadata. Keep packets at 100–200 ms and multiples of
@@ -169,6 +172,7 @@ class ExotelTransport:
         stream_sid = ""
         outbound_sequence = 1
         outbound_chunk = 1
+        ignore_input_until = 0.0
 
         while True:
             raw = ws.receive()
@@ -214,6 +218,7 @@ class ExotelTransport:
                     outbound_sequence,
                     outbound_chunk,
                 )
+                ignore_input_until = time.monotonic() + self.last_audio_duration + 0.5
                 continue
             if event_type == "stop":
                 return
@@ -222,6 +227,13 @@ class ExotelTransport:
             media = event.get("media") or {}
             pcm = base64.b64decode(media.get("payload") or "")
             if not pcm:
+                continue
+            if time.monotonic() < ignore_input_until:
+                # Exotel can loop the bot's outbound audio into the inbound
+                # stream. Do not mistake the assistant's voice for the caller.
+                speech.clear()
+                speech_started = False
+                silent_seconds = 0.0
                 continue
             duration = len(pcm) / (8000 * 2)
             loud = self._rms(pcm) > 450
@@ -253,6 +265,7 @@ class ExotelTransport:
                         conversation.language_code or "en-IN", stream_sid,
                         outbound_sequence, outbound_chunk,
                     )
+                    ignore_input_until = time.monotonic() + self.last_audio_duration + 0.5
                     continue
                 if detected:
                     conversation.language_code = detected
@@ -266,6 +279,7 @@ class ExotelTransport:
                     outbound_sequence,
                     outbound_chunk,
                 )
+                ignore_input_until = time.monotonic() + self.last_audio_duration + 0.5
                 try:
                     outcome = self.conversation_service.process_text(
                         transcript, conversation,
@@ -286,6 +300,7 @@ class ExotelTransport:
                     outbound_sequence,
                     outbound_chunk,
                 )
+                ignore_input_until = time.monotonic() + self.last_audio_duration + 0.5
                 if conversation.result.conversation_complete:
                     return
 
