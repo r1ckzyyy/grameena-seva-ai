@@ -271,15 +271,6 @@ class ExotelTransport:
                     conversation.language_code = detected
                 if not transcript:
                     continue
-                outbound_sequence, outbound_chunk = self._say(
-                    ws,
-                    self._thinking_message(conversation.language_code),
-                    conversation.language_code or "en-IN",
-                    stream_sid,
-                    outbound_sequence,
-                    outbound_chunk,
-                )
-                ignore_input_until = time.monotonic() + self.last_audio_duration + 0.5
                 try:
                     outcome = self.conversation_service.process_text(
                         transcript, conversation,
